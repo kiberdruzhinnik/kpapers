@@ -1,0 +1,5 @@
+ALTER TABLE feed_years
+    ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1));
+
+ALTER TABLE feed_months
+    ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1));

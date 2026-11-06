@@ -1,0 +1,50 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: sqlite:///data/kpapers.sqlite?mode=rwc
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_PASSWORD_HASH: ${OPERATOR_PASSWORD_HASH:?Set OPERATOR_PASSWORD_HASH in .env to an Argon2 PHC hash}
+      SESSION_SIGNING_KEY: ${SESSION_SIGNING_KEY:?Set SESSION_SIGNING_KEY in .env to a value of at least 32 bytes}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      CURRENT_MONTH_REFRESH_SECONDS: ${CURRENT_MONTH_REFRESH_SECONDS:-3600}
+      OLDER_MONTH_REFRESH_SECONDS: ${OLDER_MONTH_REFRESH_SECONDS:-86400}
+    volumes:
+      - kpapers_data:/data
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/kpapers-api", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8080}:80"
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  kpapers_data:
+
+networks:
+  app:
+    driver: bridge

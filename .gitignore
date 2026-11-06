@@ -1,0 +1,6 @@
+.env
+.env.quickstart
+.env.e2e
+.podman-data/
+backups/
+/target/

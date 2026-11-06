@@ -1,0 +1,70 @@
+services:
+  api:
+    environment:
+      E2E_FIXTURE_MODE: "true"
+      E2E_FIXTURE_DIR: /fixtures
+      PUBLIC_BASE_URL: http://web
+      COOKIE_SECURE: "false"
+    volumes:
+      - ${E2E_FIXTURE_HOST_DIR:?Set E2E_FIXTURE_HOST_DIR}/current-month:/fixtures/current-month
+
+  miniflux-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: miniflux
+      POSTGRES_PASSWORD: e2e-only-password
+      POSTGRES_DB: miniflux
+    volumes:
+      - miniflux_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U miniflux -d miniflux"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [app]
+
+  miniflux:
+    image: miniflux/miniflux:2.3.5
+    restart: on-failure
+    depends_on:
+      miniflux-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://miniflux:e2e-only-password@miniflux-db/miniflux?sslmode=disable
+      RUN_MIGRATIONS: "1"
+      CREATE_ADMIN: "1"
+      ADMIN_USERNAME: e2e
+      ADMIN_PASSWORD: e2e-only-password
+      FETCHER_ALLOW_PRIVATE_NETWORKS: "1"
+    networks: [app]
+
+  e2e:
+    image: python:3.13-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      miniflux-db:
+        condition: service_healthy
+      miniflux:
+        condition: service_started
+    environment:
+      APP_BASE_URL: http://api:8080
+      RSS_BASE_URL: http://web
+      MINIFLUX_BASE_URL: http://miniflux:8080
+      OPERATOR_USERNAME: operator
+      OPERATOR_PASSWORD: ${E2E_OPERATOR_PASSWORD:?Set E2E_OPERATOR_PASSWORD}
+      MINIFLUX_USERNAME: e2e
+      MINIFLUX_PASSWORD: e2e-only-password
+      FIXTURE_SOURCE_URL: fixture://current-month/
+      FIXTURE_DIR: /fixtures/current-month
+      FIXTURE_ROOT: /fixtures
+    volumes:
+      - ./tests/e2e:/tests/e2e:ro
+      - ${E2E_FIXTURE_HOST_DIR:?Set E2E_FIXTURE_HOST_DIR}:/fixtures
+    command: ["python", "/tests/e2e/test_miniflux.py"]
+    networks: [app]
+
+volumes:
+  miniflux_data:

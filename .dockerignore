@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+.podman-data
+backups
+target
+openspec
+docs
+scripts
+tests
+web
