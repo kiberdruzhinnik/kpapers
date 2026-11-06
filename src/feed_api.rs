@@ -69,9 +69,10 @@ async fn queue_force(pool: &SqlitePool, scope: &str, feed_id: &str, year: Option
 pub async fn extract_document(Path(document_id): Path<String>, State(pool): State<SqlitePool>, Query(query): Query<ForceQuery>) -> Result<Json<ExtractionResult>, StatusCode> {
     let row = sqlx::query_as::<_, (String, String, String, String, i64, String)>("SELECT fm.provider, fm.source_url, sd.source_path, sd.filename, sd.size_bytes, sd.content_fingerprint FROM source_documents sd JOIN feed_months fm ON fm.id = sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE sd.id = ? AND fm.active=1 AND fy.active=1 AND f.active=1")
         .bind(&document_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    let cache_fingerprint = crate::pdf_processing::cache_fingerprint(&row.5);
     let cached_fingerprint = sqlx::query_scalar::<_, String>("SELECT content_fingerprint FROM cached_content WHERE document_id = ?")
         .bind(&document_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !query.force.unwrap_or(false) && cached_fingerprint.as_deref() == Some(row.5.as_str()) {
+    if !query.force.unwrap_or(false) && cached_fingerprint.as_deref() == Some(cache_fingerprint.as_str()) {
         let (characters, pages, first_page) = sqlx::query_as::<_, (i64, i64, String)>("SELECT length(extracted_text), page_count, first_page_text FROM cached_content WHERE document_id = ?").bind(&document_id).fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         return Ok(Json(ExtractionResult { status: "cached", page_count: pages as usize, characters: characters as usize, first_page_sample: first_page.chars().take(500).collect() }));
     }
@@ -93,10 +94,10 @@ pub async fn extract_document(Path(document_id): Path<String>, State(pool): Stat
             _ => unreachable!(),
         }}?;
         let extracted = crate::pdf_processing::extract_pdf(&bytes, maximum)?;
-        let html = crate::pdf_processing::text_to_safe_html(&extracted.full_text);
+        let html = extracted.html.clone();
         let classification = crate::pdf_processing::classify_promotion(&row.3, &extracted.first_page);
         sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(document_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint, extracted_text=excluded.extracted_text, first_page_text=excluded.first_page_text, sanitized_html=excluded.sanitized_html, page_count=excluded.page_count, processed_at=CURRENT_TIMESTAMP")
-            .bind(&document_id).bind(&row.5).bind(&extracted.full_text).bind(&extracted.first_page).bind(html).bind(extracted.page_count as i64).execute(&pool).await.map_err(|e| e.to_string())?;
+            .bind(&document_id).bind(&cache_fingerprint).bind(&extracted.full_text).bind(&extracted.first_page).bind(html).bind(extracted.page_count as i64).execute(&pool).await.map_err(|e| e.to_string())?;
         sqlx::query("UPDATE source_documents SET extraction_status='success', promotional_classification=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(classification).bind(&document_id).execute(&pool).await.map_err(|e| e.to_string())?;
         Ok::<_, String>((extracted.page_count, extracted.full_text.chars().count(), extracted.first_page))
     }.await;

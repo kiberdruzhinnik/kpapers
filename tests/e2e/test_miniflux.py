@@ -97,6 +97,13 @@ def main():
         "article-beta": f"{RSS}/documents/{document_id_by_name['article-beta.pdf']}/download",
     }
     assert item_url_by_title == expected_links, f"RSS links must be stable per-document redirects: {item_url_by_title}"
+    alpha_item = next(item for item in items if item.findtext("title") == "article-alpha")
+    alpha_html = alpha_item.findtext("description") or ""
+    assert "<h1><strong>Fixture article alpha</strong></h1>" in alpha_html, alpha_html
+    assert "<h2><strong>Typography</strong></h2>" in alpha_html, alpha_html
+    assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic</em><strong><em> both</em></strong> styles.</p>" in alpha_html, alpha_html
+    assert "skladchik.ORG" not in alpha_html, "the final promotional page leaked into RSS content"
+    assert "<p>1</p>" not in alpha_html, "the printed page label leaked into RSS content"
     no_redirect = urllib.request.build_opener(NoRedirect())
     for title, filename in (("article-alpha", "article-alpha.pdf"), ("article-beta", "article-beta.pdf")):
         try:
@@ -153,6 +160,13 @@ def main():
     _, refreshed_rss = request(rss_url)
     refreshed_items = ET.fromstring(refreshed_rss).findall("./channel/item")
     assert len(refreshed_items) == 2
+    refreshed_alpha_item = next(item for item in refreshed_items if item.findtext("title") == "article-alpha")
+    refreshed_alpha_html = refreshed_alpha_item.findtext("description") or ""
+    assert "<h1><strong>Updated fixture article alpha</strong></h1>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<h2><strong>Typography</strong></h2>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p>Updated fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic</em><strong><em> both</em></strong> styles.</p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "skladchik.ORG" not in refreshed_alpha_html
+    assert "<p>1</p>" not in refreshed_alpha_html
     refreshed_guids = {item.findtext("title"): item.findtext("guid") for item in refreshed_items}
     assert refreshed_guids == guid_by_title, "RSS GUIDs changed during refresh"
 

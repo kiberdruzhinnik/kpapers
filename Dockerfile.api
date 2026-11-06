@@ -1,9 +1,24 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /app
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 RUN cargo build --release
+
+FROM debian:bookworm-slim AS pdfium
+ARG TARGETARCH
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl tar \
+    && case "$TARGETARCH" in \
+        amd64) archive="pdfium-linux-x64.tgz"; checksum="e1c3ce6e270cb5e0c20816b379ad9f2c1309972697c505f508de92bf5e7d6659" ;; \
+        arm64) archive="pdfium-linux-arm64.tgz"; checksum="8b8818f2ec57d1b213d952ca6d7f0ffeca9d0110487d0e20ad83ba918bc92efa" ;; \
+        *) echo "Unsupported Pdfium target architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/$archive" -o /tmp/pdfium.tgz \
+    && echo "$checksum  /tmp/pdfium.tgz" | sha256sum -c - \
+    && mkdir -p /usr/local/lib \
+    && tar -xzf /tmp/pdfium.tgz -C /usr/local/lib --strip-components=1 lib/libpdfium.so \
+    && rm -rf /var/lib/apt/lists/* /tmp/pdfium.tgz
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -11,6 +26,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 app
 COPY --from=builder /app/target/release/kpapers-api /usr/local/bin/kpapers-api
+COPY --from=pdfium /usr/local/lib/libpdfium.so /usr/local/lib/libpdfium.so
+RUN ldconfig
 RUN mkdir -p /data && chown app:app /data
 USER 10001:10001
 ENV DATABASE_URL=sqlite:///data/kpapers.sqlite?mode=rwc
