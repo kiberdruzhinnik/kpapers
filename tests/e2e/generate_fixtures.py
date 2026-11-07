@@ -16,7 +16,7 @@ def pdf_pages(page_texts: list[str | list[list[tuple[str, int, str]]]]) -> bytes
         else:
             lines = page
         for line in lines:
-            for text, _, _ in line:
+            for text, _, *_ in line:
                 for char in text:
                     encoded = char.encode("cp1251")
                     if len(encoded) != 1:
@@ -42,11 +42,11 @@ def pdf_pages(page_texts: list[str | list[list[tuple[str, int, str]]]]) -> bytes
             lines = [[(line, 12, "F1")] for line in (page.splitlines() or [page])]
         else:
             lines = page
-        commands = ["BT 50 740 Td"]
+        commands = ["BT"]
         for index, line in enumerate(lines):
-            if index:
-                commands.append("0 -16 Td")
-            for text, size, font_name in line:
+            line_x = line[0][3] if line and len(line[0]) > 3 else 50
+            commands.append(f"1 0 0 1 {line_x} {740 - index * 16} Tm")
+            for text, size, font_name, *_ in line:
                 commands.append(f"/{font_name} {size} Tf <{text.encode('cp1251').hex()}> Tj")
         commands.append("ET")
         stream = " ".join(commands).encode("ascii")
@@ -91,13 +91,14 @@ def main() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     changed = sys.argv[1] if len(sys.argv) > 1 else ""
     ad = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?"
+    first_page_ad = "КУПЛЕНО НА\n\nskladchik.ORG"
     headline_first_line = (
         "Обновлённый Дмитриев у Трампов, трудности у"
         if changed == "article-alpha.pdf"
         else "Дмитриев у Трампов, трудности у"
     )
     typography_page = [
-        [("1", 12, "F1")],
+        [("2", 12, "F1")],
         [("06.11.2026", 14, "F2"), (" ", 14, "F1"), ("12:12", 14, "F2")],
         [(headline_first_line, 22, "F2")],
         [("танкеров, мегаполисы США у", 22, "F2")],
@@ -109,6 +110,15 @@ def main() -> None:
         [("across two lines.", 12, "F1")],
         [("Bold ", 12, "F2"), ("italic", 12, "F3"), (" both", 12, "F4"), (" styles.", 12, "F1")],
         [],
+        [("**это не инвестиционные рекомендации**", 12, "F1")],
+        [],
+        [("Традиционные технические предуведомления:", 12, "F1", 70)],
+        [],
+        [("Для новых читателей: начинайте с этого текста.", 12, "F1", 70)],
+        [],
+        [("Продолжение технического предуведомления.", 12, "F1", 70)],
+        [("Обычный текст после предуведомления.", 12, "F1", 50)],
+        [],
         [("Колумнистка Bloomberg по этому поводу пишет:", 12, "F1")],
         [],
         [("«Техас — крупнейший ", 12, "F3"), ("красный", 12, "F4"), (" штат в стране. Он трижды голосовал за", 12, "F3")],
@@ -116,8 +126,27 @@ def main() -> None:
         [],
         [("Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.", 12, "F3")],
     ]
-    (ROOT / "article-alpha.pdf").write_bytes(pdf_pages([typography_page, ad]))
-    (ROOT / "article-beta.pdf").write_bytes(pdf("1\nFixture article beta"))
+    (ROOT / "article-alpha.pdf").write_bytes(pdf_pages([first_page_ad, typography_page, ad]))
+    sponsr_page = [
+        [("1", 12, "F1")],
+        [("sponsr", 24, "F2")],
+        [("CrimsonAlter – Analytics", 12, "F1")],
+        [("27 февр 11:44", 10, "F1")],
+        [("58 минут", 10, "F1")],
+        [],
+        [("**это не инвестиционные рекомендации**", 16, "F1")],
+        [],
+        [("Сразу к делу, коллеги.", 16, "F1")],
+        [],
+        [("Традиционные технические предуведомления:", 16, "F1", 70)],
+        [],
+        [("Для новых читателей: начинайте с этого текста.", 16, "F1", 70)],
+        [],
+        [("Продолжение технического предуведомления.", 16, "F1", 70)],
+        [],
+        [("На данном проекте периодически упоминается термин «старые деньги».", 16, "F1", 50)],
+    ]
+    (ROOT / "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды, «бессмертные» портфели и стоицизм.pdf").write_bytes(pdf_pages([sponsr_page]))
     (ROOT / "club-promotion.pdf").write_bytes(pdf("Join the club today"))
     (ROOT / "ignored.txt").write_text("not a PDF", encoding="utf-8")
     (ROOT / "nested").mkdir(exist_ok=True)

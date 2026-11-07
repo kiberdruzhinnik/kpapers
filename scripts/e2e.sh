@@ -35,8 +35,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 FIXTURE_ROOT="$fixture_dir" python3 "$ROOT/tests/e2e/generate_fixtures.py"
+if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
+  [[ -f "$E2E_REFERENCE_PDF" ]] || die "E2E_REFERENCE_PDF is not a regular file: $E2E_REFERENCE_PDF"
+  reference_filename="${E2E_REFERENCE_FILENAME:-$(basename -- "$E2E_REFERENCE_PDF")}"
+  [[ "$reference_filename" == *.pdf || "$reference_filename" == *.PDF ]] || die 'E2E_REFERENCE_PDF must have a .pdf filename.'
+  rm -- "$fixture_dir/current-month/[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды, «бессмертные» портфели и стоицизм.pdf"
+  cp -- "$E2E_REFERENCE_PDF" "$fixture_dir/current-month/$reference_filename"
+  printf 'E2E_REFERENCE_PDF_TEST=true\n' >> "$ENV_FILE"
+  printf 'REFERENCE_DOCUMENT_FILENAME=%s\n' "$reference_filename" >> "$ENV_FILE"
+fi
 chmod -R a+rX "$fixture_dir"
-compose build api
+compose build api web
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
 HASH_VALUE="$password_hash" python3 - "$ENV_FILE" <<'PY'
@@ -51,4 +60,4 @@ env_file.write_text("\n".join(
     for line in lines
 ) + "\n")
 PY
-compose up --build --abort-on-container-exit --exit-code-from e2e e2e
+compose up --no-build --abort-on-container-exit --exit-code-from e2e e2e

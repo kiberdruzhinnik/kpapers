@@ -8,7 +8,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 3;
+const EXTRACTION_PIPELINE_REVISION: u32 = 9;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -22,6 +22,7 @@ struct StyledLine {
     runs: Vec<StyledRun>,
     size: f32,
     gap_before: f32,
+    left: f32,
 }
 
 impl StyledLine {
@@ -70,11 +71,18 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             let Some(ch) = character.unicode_char() else {
                 continue;
             };
+            if !is_xml_10_char(ch) {
+                continue;
+            }
             if ch == '\r' {
                 continue;
             }
             let y = character
                 .origin_y()
+                .map_err(|error| format!("PDF character position extraction failed: {error}"))?
+                .value;
+            let x = character
+                .origin_x()
                 .map_err(|error| format!("PDF character position extraction failed: {error}"))?
                 .value;
             let size = character.scaled_font_size().value.max(1.0);
@@ -92,6 +100,7 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
                     runs: Vec::new(),
                     size,
                     gap_before,
+                    left: x,
                 });
             }
             force_new_line = false;
@@ -120,6 +129,7 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
         }
 
         for line in &mut lines {
+            parse_markdown_bold(&mut line.runs);
             trim_run_edges(&mut line.runs);
         }
         lines.retain(|line| !line.text().trim().is_empty());
@@ -131,16 +141,20 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
         pages.push(lines);
     }
 
-    if pages.last().is_some_and(|lines| {
-        is_skladchik_promotion(
-            &lines
-                .iter()
-                .map(StyledLine::text)
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-    }) {
+    if pages
+        .last()
+        .is_some_and(|lines| is_skladchik_boundary_ad(lines))
+    {
         pages.pop();
+    }
+    if pages
+        .first()
+        .is_some_and(|lines| is_skladchik_boundary_ad(lines))
+    {
+        pages.remove(0);
+    }
+    if let Some(first_page) = pages.first_mut() {
+        strip_sponsr_preamble(first_page);
     }
 
     let first_page = pages
@@ -179,6 +193,154 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
     })
 }
 
+pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut ExtractedText) {
+    let Some(stem) = filename
+        .strip_suffix(".pdf")
+        .or_else(|| filename.strip_suffix(".PDF"))
+    else {
+        return;
+    };
+    let stem = stem
+        .strip_suffix(" [skladchik.org]")
+        .or_else(|| stem.strip_suffix(" [sklad"))
+        .unwrap_or(stem);
+    let title = stem
+        .find('[')
+        .map(|index| &stem[index..])
+        .unwrap_or(stem)
+        .replace("FAQ_", "FAQ:");
+    if !title.starts_with('[') {
+        return;
+    }
+
+    let mut blocks = extracted.html.lines().collect::<Vec<_>>();
+    while blocks.first().is_some_and(|block| {
+        let text = strip_html_tags(block).to_lowercase().replace('ё', "е");
+        text == "sponsr"
+            || text.contains("crimsonalter")
+            || has_publication_timestamp(&text)
+            || ["минута", "минут", "часа", "часов"]
+                .iter()
+                .any(|unit| text.contains(unit))
+    }) {
+        blocks.remove(0);
+    }
+    if blocks.is_empty() {
+        blocks = vec![];
+    }
+    let recovered_title_block = blocks.first().is_some_and(|block| {
+        strip_html_tags(block).trim_start().starts_with("[Философское]")
+    });
+    if recovered_title_block {
+        blocks.remove(0);
+    }
+    let mut html = format!("<h1><strong>{}</strong></h1>", escape_html(&title));
+    let mut inside_quote = false;
+    for block in blocks {
+        html.push('\n');
+        inside_quote |= block.contains("<blockquote>");
+        // Filename-recovered Sponsr titles are authoritative. Keep only short,
+        // explicitly bold section headings; font-size-only candidates become
+        // paragraphs, and notice contents stay paragraphs inside the quote.
+        let block_text = strip_html_tags(block);
+        let block = if inside_quote {
+            block
+                .replace("<h1>", "<p>")
+                .replace("</h1>", "</p>")
+                .replace("<h2>", "<p>")
+                .replace("</h2>", "</p>")
+                .replace("<h3>", "<p>")
+                .replace("</h3>", "</p>")
+        } else if (block.starts_with("<h2>") || block.starts_with("<h3>"))
+            && block.contains("<strong>")
+            && block_text.trim() != "это не инвестиционные рекомендации"
+            && block_text.chars().count() <= 100
+        {
+            block.to_owned()
+        } else {
+            block
+                .strip_prefix("<h1>")
+                .and_then(|rest| rest.strip_suffix("</h1>"))
+                .or_else(|| {
+                    block
+                        .strip_prefix("<h2>")
+                        .and_then(|rest| rest.strip_suffix("</h2>"))
+                })
+                .or_else(|| {
+                    block
+                        .strip_prefix("<h3>")
+                        .and_then(|rest| rest.strip_suffix("</h3>"))
+                })
+                .map(|body| format!("<p>{body}</p>"))
+                .unwrap_or_else(|| block.to_owned())
+        };
+        html.push_str(&block);
+        if block.contains("</blockquote>") {
+            inside_quote = false;
+        }
+    }
+    extracted.html = html;
+    extracted.first_page = format!(
+        "{title}\n{}",
+        remove_publication_timestamp(&extracted.first_page)
+    );
+    extracted.full_text = format!(
+        "{title}\n\n{}",
+        remove_publication_timestamp(&extracted.full_text)
+    );
+}
+
+fn strip_html_tags(text: &str) -> String {
+    let mut inside_tag = false;
+    text.chars()
+        .filter_map(|ch| match ch {
+            '<' => { inside_tag = true; None }
+            '>' => { inside_tag = false; None }
+            _ if inside_tag => None,
+            _ => Some(ch),
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn has_publication_timestamp(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let has_month = [
+        "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек",
+    ]
+    .iter()
+    .any(|month| lower.contains(month));
+    has_month && text.split_whitespace().any(|part| {
+        let mut split = part.split(':');
+        matches!((split.next(), split.next()), (Some(hour), Some(minute))
+            if hour.len() == 2 && minute.len() == 2 && hour.chars().all(|ch| ch.is_ascii_digit()) && minute.chars().all(|ch| ch.is_ascii_digit()))
+    })
+}
+
+fn remove_publication_timestamp(text: &str) -> String {
+    let Some(line_end) = text.find('\n') else {
+        let end = ["минута", "минут", "час", "часа", "часов"]
+            .iter()
+            .filter_map(|unit| text.find(unit).map(|index| index + unit.len()))
+            .max();
+        return end.map_or_else(
+            || text.to_owned(),
+            |end| {
+                text[end..]
+                    .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '�')
+                    .to_owned()
+            },
+        );
+    };
+    let first_line = &text[..line_end];
+    let rest = &text[line_end + 1..];
+    if has_publication_timestamp(first_line) {
+        return rest.trim_start().to_owned();
+    }
+    text.to_owned()
+}
+
 fn pdfium() -> Result<&'static Pdfium, String> {
     static INSTANCE: OnceLock<Result<Pdfium, String>> = OnceLock::new();
     match INSTANCE.get_or_init(|| {
@@ -209,6 +371,34 @@ fn push_styled_char(runs: &mut Vec<StyledRun>, ch: char, bold: bool, italic: boo
     }
 }
 
+fn parse_markdown_bold(runs: &mut Vec<StyledRun>) {
+    let characters = runs
+        .iter()
+        .flat_map(|run| run.text.chars().map(move |ch| (ch, run.bold, run.italic)))
+        .collect::<Vec<_>>();
+    let mut parsed = Vec::new();
+    let mut index = 0;
+    while index < characters.len() {
+        let is_marker = |at: usize| {
+            characters.get(at).is_some_and(|(ch, _, _)| *ch == '*')
+                && characters.get(at + 1).is_some_and(|(ch, _, _)| *ch == '*')
+        };
+        if is_marker(index) {
+            if let Some(end) = (index + 2..characters.len()).find(|at| is_marker(*at)) {
+                for (ch, _, italic) in &characters[index + 2..end] {
+                    push_styled_char(&mut parsed, *ch, true, *italic);
+                }
+                index = end + 2;
+                continue;
+            }
+        }
+        let (ch, bold, italic) = characters[index];
+        push_styled_char(&mut parsed, ch, bold, italic);
+        index += 1;
+    }
+    *runs = parsed;
+}
+
 #[cfg(test)]
 fn strip_page_label(page: &str, page_number: usize) -> String {
     let expected = page_number.to_string();
@@ -228,18 +418,42 @@ fn strip_page_label(page: &str, page_number: usize) -> String {
 }
 
 fn is_skladchik_promotion(text: &str) -> bool {
-    let normalized = text
-        .to_lowercase()
+    let normalized = normalized_promotion_text(text);
+    normalized.contains("skladchik org")
+        && normalized.contains("ты еще не в клубе")
+        && normalized.contains("что такое клуб складчик")
+}
+
+fn is_skladchik_purchase_promotion(text: &str) -> bool {
+    let normalized = normalized_promotion_text(text);
+    normalized.starts_with("куплено на") && normalized.contains("skladchik org")
+}
+
+fn normalized_promotion_text(text: &str) -> String {
+    text.to_lowercase()
         .replace('ё', "е")
         .chars()
         .map(|ch| if ch.is_alphanumeric() { ch } else { ' ' })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ");
-    normalized.contains("skladchik org")
-        && normalized.contains("ты еще не в клубе")
-        && normalized.contains("что такое клуб складчик")
+        .join(" ")
+}
+
+fn is_skladchik_boundary_ad(lines: &[StyledLine]) -> bool {
+    let text = lines
+        .iter()
+        .map(StyledLine::text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    is_skladchik_promotion(&text) || is_skladchik_purchase_promotion(&text)
+}
+
+fn is_xml_10_char(ch: char) -> bool {
+    matches!(ch, '\u{9}' | '\u{a}' | '\u{d}')
+        || ('\u{20}'..='\u{d7ff}').contains(&ch)
+        || ('\u{e000}'..='\u{fffd}').contains(&ch)
+        || ('\u{10000}'..='\u{10ffff}').contains(&ch)
 }
 
 pub fn normalize_text(input: &str) -> String {
@@ -467,6 +681,39 @@ fn merge_wrapped_title_lines(pages: &mut [Vec<StyledLine>]) {
     }
 }
 
+fn strip_sponsr_preamble(page: &mut Vec<StyledLine>) {
+    let Some(masthead_index) = page
+        .iter()
+        .take(6)
+        .position(|line| line.text().trim().to_lowercase().replace('ё', "е") == "sponsr")
+    else {
+        return;
+    };
+    let body_size = page
+        .iter()
+        .filter(|line| line.text().chars().count() >= 40)
+        .map(|line| line.size)
+        .min_by(f32::total_cmp)
+        .or_else(|| page.iter().map(|line| line.size).min_by(f32::total_cmp))
+        .unwrap_or(12.0);
+    let Some(title_index) =
+        page.iter()
+            .enumerate()
+            .skip(masthead_index + 1)
+            .find_map(|(index, line)| {
+                let text = line.text();
+                let is_title = text.chars().count() >= 24
+                    && (line.size >= body_size * 1.45 || text.trim_start().starts_with('['));
+                is_title.then_some(index)
+            })
+    else {
+        return;
+    };
+    if title_index > 0 {
+        page.drain(..title_index);
+    }
+}
+
 fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     let mut grouped_pages = pages.to_vec();
     merge_wrapped_title_lines(&mut grouped_pages);
@@ -519,15 +766,34 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     heading_sizes.sort_by(|a, b| b.total_cmp(a));
     heading_sizes.dedup_by(|a, b| (*a - *b).abs() < 0.5);
 
-    let mut blocks: Vec<(String, Vec<StyledRun>)> = Vec::new();
+    let base_left = all_lines
+        .iter()
+        .map(|line| line.left)
+        .min_by(f32::total_cmp)
+        .unwrap_or(0.0);
+    let mut blocks: Vec<(String, Vec<StyledRun>, bool)> = Vec::new();
     let mut paragraph = Vec::<StyledRun>::new();
+    let mut paragraph_quote = false;
+    let mut quote_left = None::<f32>;
     let mut global_index = 0usize;
     for page in pages {
         if !paragraph.is_empty() {
-            blocks.push(("p".to_owned(), std::mem::take(&mut paragraph)));
+            blocks.push((
+                "p".to_owned(),
+                std::mem::take(&mut paragraph),
+                paragraph_quote,
+            ));
         }
         let mut previous_line: Option<&StyledLine> = None;
         for line in page.iter().filter(|line| !line.text().trim().is_empty()) {
+            let normalized = line.text().trim().to_lowercase().replace('ё', "е");
+            let is_notice_heading = normalized == "традиционные технические предуведомления:";
+            if is_notice_heading && line.left >= base_left + 5.0 {
+                quote_left = Some(line.left);
+            } else if quote_left.is_some_and(|left| line.left < left - 2.0) {
+                quote_left = None;
+            }
+            let in_quote = quote_left.is_some();
             let line_index = global_index;
             global_index += 1;
             let heading_tag = if Some(line_index) == title_index {
@@ -548,14 +814,27 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
 
             if let Some(tag) = heading_tag {
                 if !paragraph.is_empty() {
-                    blocks.push(("p".to_owned(), std::mem::take(&mut paragraph)));
+                    blocks.push((
+                        "p".to_owned(),
+                        std::mem::take(&mut paragraph),
+                        paragraph_quote,
+                    ));
                 }
-                blocks.push((tag.to_owned(), line.runs.clone()));
+                blocks.push((tag.to_owned(), line.runs.clone(), in_quote));
             } else {
                 let paragraph_break = previous_line
                     .is_some_and(|previous| line.gap_before > line.size.max(previous.size) * 1.8);
-                if paragraph_break && !paragraph.is_empty() {
-                    blocks.push(("p".to_owned(), std::mem::take(&mut paragraph)));
+                if (paragraph_break || (!paragraph.is_empty() && paragraph_quote != in_quote))
+                    && !paragraph.is_empty()
+                {
+                    blocks.push((
+                        "p".to_owned(),
+                        std::mem::take(&mut paragraph),
+                        paragraph_quote,
+                    ));
+                }
+                if paragraph.is_empty() {
+                    paragraph_quote = in_quote;
                 }
                 push_line_separator(&mut paragraph, &line.runs);
                 append_runs(&mut paragraph, &line.runs);
@@ -564,14 +843,27 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
         }
     }
     if !paragraph.is_empty() {
-        blocks.push(("p".to_owned(), paragraph));
+        blocks.push(("p".to_owned(), paragraph, paragraph_quote));
     }
 
-    blocks
-        .iter()
-        .map(|(tag, runs)| format!("<{tag}>{}</{tag}>", styled_runs_html(runs)))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut output = Vec::new();
+    let mut index = 0;
+    while index < blocks.len() {
+        let (tag, runs, in_quote) = &blocks[index];
+        if *in_quote {
+            let mut quote = Vec::new();
+            while index < blocks.len() && blocks[index].2 {
+                let (tag, runs, _) = &blocks[index];
+                quote.push(format!("<{tag}>{}</{tag}>", styled_runs_html(runs)));
+                index += 1;
+            }
+            output.push(format!("<blockquote>{}</blockquote>", quote.join("\n")));
+        } else {
+            output.push(format!("<{tag}>{}</{tag}>", styled_runs_html(runs)));
+            index += 1;
+        }
+    }
+    output.join("\n")
 }
 
 pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
@@ -597,8 +889,9 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        StyledLine, StyledRun, cache_fingerprint, is_skladchik_promotion, lines_to_html,
-        normalize_text, push_styled_char, strip_page_label, text_to_safe_html,
+        StyledLine, StyledRun, cache_fingerprint, is_skladchik_promotion,
+        is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
+        push_styled_char, strip_page_label, strip_sponsr_preamble, text_to_safe_html,
     };
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
@@ -613,6 +906,55 @@ mod tests {
         assert!(!is_skladchik_promotion(
             "skladchik.ORG and Ты еще не в Клубе?"
         ));
+    }
+
+    #[test]
+    fn purchase_ad_requires_leading_purchase_phrase_and_skladchik_domain() {
+        assert!(is_skladchik_purchase_promotion(
+            "КУПЛЕНО НА\n\nskladchik.ORG"
+        ));
+        assert!(!is_skladchik_purchase_promotion(
+            "Article text mentions skladchik.ORG but not the purchase banner"
+        ));
+        assert!(!is_skladchik_purchase_promotion(
+            "КУПЛЕНО НА another.example"
+        ));
+    }
+
+    #[test]
+    fn strips_sponsr_chrome_before_identifiable_article_title() {
+        let mut page = vec![
+            line("sponsr", 24.0),
+            line("CrimsonAlter – Analytics", 12.0),
+            line("27 февр 11:44", 10.0),
+            line("58 минут", 10.0),
+            line("[Философское] «Старые деньги» — FAQ:", 22.0),
+            line("как правильно считать дивиденды", 22.0),
+            line("Body paragraph starts here.", 12.0),
+        ];
+        strip_sponsr_preamble(&mut page);
+        assert_eq!(page[0].text(), "[Философское] «Старые деньги» — FAQ:");
+        assert_eq!(page.len(), 3);
+    }
+
+    #[test]
+    fn keeps_content_when_sponsr_title_is_ambiguous() {
+        let mut page = vec![line("sponsr", 24.0), line("Short text", 12.0)];
+        strip_sponsr_preamble(&mut page);
+        assert_eq!(page.len(), 2);
+    }
+
+    fn line(text: &str, size: f32) -> StyledLine {
+        StyledLine {
+            runs: vec![StyledRun {
+                text: text.into(),
+                bold: false,
+                italic: false,
+            }],
+            size,
+            gap_before: 0.0,
+            left: 50.0,
+        }
     }
 
     #[test]
@@ -659,11 +1001,66 @@ mod tests {
     }
 
     #[test]
+    fn rejects_xml_1_0_forbidden_control_characters() {
+        assert!(!is_xml_10_char('\u{2}'));
+        assert!(is_xml_10_char('\t'));
+        assert!(is_xml_10_char('ё'));
+        assert!(is_xml_10_char('𐀀'));
+    }
+
+    #[test]
+    fn restores_sponsr_heading_and_removes_publication_metadata_from_document_name() {
+        let mut extracted = super::ExtractedText {
+            full_text: "27 февр 11:44 58 минут Сразу к делу, коллеги.".into(),
+            html: "<h1>27 февр 11:44 58 минут</h1>\n<h2>Сразу к делу, коллеги.</h2>".into(),
+            first_page: "27 февр 11:44 58 минут Сразу к делу, коллеги.".into(),
+            page_count: 1,
+        };
+        super::repair_sponsr_title_from_filename(
+            "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды [sklad.pdf",
+            &mut extracted,
+        );
+        assert_eq!(
+            extracted.html,
+            "<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>\n<p>Сразу к делу, коллеги.</p>"
+        );
+        assert_eq!(
+            extracted.first_page,
+            "[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды\nСразу к делу, коллеги."
+        );
+        assert_eq!(
+            extracted.full_text,
+            "[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды\n\nСразу к делу, коллеги."
+        );
+    }
+
+    #[test]
+    fn filename_recovered_sponsr_title_keeps_body_blocks_and_clear_section_heading() {
+        let mut extracted = super::ExtractedText {
+            full_text: "27 февр 11:44 58 минут body".into(),
+            html: "<p>27 февр 11:44</p>\n<h1><strong>это не инвестиционные рекомендации</strong></h1>\n<h2>Сразу к делу, коллеги.</h2>\n<h2><strong>Раздел статьи</strong></h2>\n<blockquote><p>Традиционные технические предуведомления:</p></blockquote>\n<p>Обычный текст после цитаты.</p>".into(),
+            first_page: "27 февр 11:44 58 минут body".into(),
+            page_count: 1,
+        };
+        super::repair_sponsr_title_from_filename(
+            "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды.pdf",
+            &mut extracted,
+        );
+        assert!(extracted.html.starts_with("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>"));
+        assert!(extracted.html.contains("<p><strong>это не инвестиционные рекомендации</strong></p>"));
+        assert!(extracted.html.contains("<p>Сразу к делу, коллеги.</p>"));
+        assert!(extracted.html.contains("<h2><strong>Раздел статьи</strong></h2>"));
+        assert!(extracted.html.contains("<blockquote><p>Традиционные технические предуведомления:</p></blockquote>"));
+        assert!(extracted.html.ends_with("<p>Обычный текст после цитаты.</p>"));
+        assert!(!extracted.html.contains("27 февр 11:44"));
+    }
+
+    #[test]
     fn cache_fingerprint_invalidates_old_entries_and_is_stable() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert!(processed.starts_with("pdf-text-v3:"));
-        assert_ne!(processed, format!("pdf-text-v2:{source}"));
+        assert!(processed.starts_with("pdf-text-v9:"));
+        assert_ne!(processed, format!("pdf-text-v8:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
     }
@@ -698,6 +1095,53 @@ mod tests {
         assert_eq!(
             super::styled_runs_html(&runs),
             "<strong>&lt;bold&gt;</strong><em>italic<strong>both</strong></em>plain &amp; safe"
+        );
+    }
+
+    #[test]
+    fn parses_literal_markdown_bold_and_preserves_unmatched_markers() {
+        let mut runs = vec![StyledRun {
+            text: "**это не инвестиционные рекомендации**".into(),
+            bold: false,
+            italic: false,
+        }];
+        super::parse_markdown_bold(&mut runs);
+        assert_eq!(
+            super::styled_runs_html(&runs),
+            "<strong>это не инвестиционные рекомендации</strong>"
+        );
+
+        let mut unmatched = vec![StyledRun {
+            text: "**незакрытый маркер".into(),
+            bold: false,
+            italic: false,
+        }];
+        super::parse_markdown_bold(&mut unmatched);
+        assert_eq!(super::styled_runs_html(&unmatched), "**незакрытый маркер");
+    }
+
+    #[test]
+    fn wraps_indented_technical_notice_blocks_in_one_blockquote() {
+        let mut notice = line("Традиционные технические предуведомления:", 12.0);
+        notice.left = 70.0;
+        let mut continuation = line("Для новых читателей: начинайте с этого текста.", 12.0);
+        continuation.left = 70.0;
+        continuation.gap_before = 32.0;
+        let mut following = line("Обычный текст после предуведомления.", 12.0);
+        following.left = 50.0;
+        following.gap_before = 32.0;
+        let html = lines_to_html(&[vec![
+            line("Начало статьи.", 12.0),
+            notice,
+            continuation,
+            following,
+        ]]);
+        assert!(html.contains(
+            "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p></blockquote>"
+        ), "{html}");
+        assert!(
+            html.ends_with("<p>Обычный текст после предуведомления.</p>"),
+            "{html}"
         );
     }
 
@@ -737,6 +1181,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 0.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -746,6 +1191,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 32.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![
@@ -762,6 +1208,7 @@ mod tests {
                 ],
                 size: 12.0,
                 gap_before: 16.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -771,6 +1218,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 32.0,
+                left: 50.0,
             },
         ];
         assert_eq!(
@@ -790,6 +1238,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 0.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -799,6 +1248,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 27.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -808,6 +1258,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 40.0,
+                left: 50.0,
             },
         ];
         let html = lines_to_html(&[page]);
@@ -835,6 +1286,7 @@ mod tests {
                 }],
                 size: 14.0,
                 gap_before: 0.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -844,6 +1296,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 35.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -853,6 +1306,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 26.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -862,6 +1316,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 26.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -871,6 +1326,7 @@ mod tests {
                 }],
                 size: 16.0,
                 gap_before: 40.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -880,6 +1336,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 36.0,
+                left: 50.0,
             },
         ];
         let html = lines_to_html(&[page]);
@@ -905,6 +1362,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 0.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -914,6 +1372,7 @@ mod tests {
                 }],
                 size: 16.0,
                 gap_before: 16.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -923,6 +1382,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 16.0,
+                left: 50.0,
             },
         ];
         let html = lines_to_html(&[page]);
@@ -943,6 +1403,7 @@ mod tests {
                 }],
                 size: 22.0,
                 gap_before: 0.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -952,6 +1413,7 @@ mod tests {
                 }],
                 size: 16.0,
                 gap_before: 16.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -961,6 +1423,7 @@ mod tests {
                 }],
                 size: 14.0,
                 gap_before: 16.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -970,6 +1433,7 @@ mod tests {
                 }],
                 size: 13.0,
                 gap_before: 32.0,
+                left: 50.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -979,6 +1443,7 @@ mod tests {
                 }],
                 size: 12.0,
                 gap_before: 32.0,
+                left: 50.0,
             },
         ];
         let html = lines_to_html(&[page]);

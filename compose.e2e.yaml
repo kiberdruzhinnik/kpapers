@@ -60,6 +60,8 @@ services:
       FIXTURE_SOURCE_URL: fixture://current-month/
       FIXTURE_DIR: /fixtures/current-month
       FIXTURE_ROOT: /fixtures
+      REFERENCE_PDF_TEST: ${E2E_REFERENCE_PDF_TEST:-false}
+      REFERENCE_DOCUMENT_FILENAME: ${REFERENCE_DOCUMENT_FILENAME:-article-beta.pdf}
     volumes:
       - ./tests/e2e:/tests/e2e:ro
       - ${E2E_FIXTURE_HOST_DIR:?Set E2E_FIXTURE_HOST_DIR}:/fixtures

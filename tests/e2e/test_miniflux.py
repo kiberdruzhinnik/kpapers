@@ -7,6 +7,7 @@ import os
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
@@ -58,6 +59,10 @@ def wait_for(check, message, timeout=90):
 
 
 def main():
+    reference_pdf_test = os.environ.get("REFERENCE_PDF_TEST") == "true"
+    generated_beta_filename = "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды, «бессмертные» портфели и стоицизм.pdf"
+    beta_filename = os.environ.get("REFERENCE_DOCUMENT_FILENAME", generated_beta_filename) if reference_pdf_test else generated_beta_filename
+    beta_title = beta_filename.removesuffix(".pdf").removesuffix(".PDF")
     cookies = http.cookiejar.CookieJar()
     app_client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
     request(APP + "/api/management/login", method="POST", payload={
@@ -79,29 +84,65 @@ def main():
     assert discovery["discovered_pdfs"] == 3, discovery
     _, documents = request(f"{APP}/api/management/months/{month_id}/documents", opener=app_client)
     by_name = {document["filename"]: document for document in documents}
-    assert set(by_name) == {"article-alpha.pdf", "article-beta.pdf", "club-promotion.pdf"}
+    assert set(by_name) == {"article-alpha.pdf", beta_filename, "club-promotion.pdf"}
     for document in documents:
-        request(f"{APP}/api/management/documents/{document['id']}/extract?force=true", method="POST", opener=app_client)
+        _, extraction = request(f"{APP}/api/management/documents/{document['id']}/extract?force=true", method="POST", opener=app_client)
+        if reference_pdf_test and document["filename"] == beta_filename:
+            sample = extraction["first_page_sample"]
+            assert sample.strip(), "reference PDF extracted no first-page text"
+            assert "куплено на" not in sample.lower(), sample
+            assert "skladchik.org" not in sample.lower(), sample
+            reference_title = beta_title[beta_title.find("["):] if "[" in beta_title else beta_title
+            for suffix in (" [skladchik.org]", " [sklad"):
+                reference_title = reference_title.removesuffix(suffix)
+            assert sample.startswith(reference_title), f"reference title missing at start of extraction: {sample[:500]!r}"
     for document in documents:
         _, extraction = request(f"{APP}/api/management/documents/{document['id']}/extract", method="POST", opener=app_client)
         assert extraction["status"] == "cached", extraction
 
     rss_url = f"{RSS}/feeds/{feed_id}"
     _, rss_bytes = request(rss_url)
-    channel = ET.fromstring(rss_bytes)
+    try:
+        channel = ET.fromstring(rss_bytes)
+    except ET.ParseError as error:
+        line, column = error.position
+        context = rss_bytes.decode("utf-8", "replace").splitlines()[line - 1]
+        raise AssertionError(f"RSS XML parse failed at {line}:{column}: {context[max(0, column - 120):column + 120]}") from error
     items = channel.findall("./channel/item")
     assert len(items) == 2, f"expected two eligible articles, got {len(items)}"
     guid_by_title = {item.findtext("title"): item.findtext("guid") for item in items}
-    assert set(guid_by_title) == {"article-alpha", "article-beta"}
+    assert set(guid_by_title) == {"article-alpha", beta_title}
     document_id_by_name = {document["filename"]: document["id"] for document in documents}
     item_url_by_title = {item.findtext("title"): item.findtext("link") for item in items}
     expected_links = {
         "article-alpha": f"{RSS}/documents/{document_id_by_name['article-alpha.pdf']}/download",
-        "article-beta": f"{RSS}/documents/{document_id_by_name['article-beta.pdf']}/download",
+        beta_title: f"{RSS}/documents/{document_id_by_name[beta_filename]}/download",
     }
     assert item_url_by_title == expected_links, f"RSS links must be stable per-document redirects: {item_url_by_title}"
     alpha_item = next(item for item in items if item.findtext("title") == "article-alpha")
     alpha_html = alpha_item.findtext("description") or ""
+    beta_item = next(item for item in items if item.findtext("title") == beta_title)
+    beta_html = beta_item.findtext("description") or ""
+    if reference_pdf_test:
+        assert beta_html.strip(), "reference PDF produced empty RSS content"
+        expected_reference_title = beta_title[beta_title.find("["):] if "[" in beta_title else beta_title
+        for suffix in (" [skladchik.org]", " [sklad"):
+            expected_reference_title = expected_reference_title.removesuffix(suffix)
+        expected_title_markup = f"<h1><strong>{expected_reference_title}</strong></h1>"
+        assert beta_html.startswith(expected_title_markup), f"reference article does not start with its filename headline: {beta_html[:800]!r}"
+        assert "куплено на" not in beta_html.lower(), beta_html[:1200]
+        assert "skladchik.org" not in beta_html.lower(), beta_html[:1200]
+        assert not __import__("re").search(r"<p>\s*\d+\s*</p>", beta_html), "standalone page number leaked into reference content"
+        print(f"Live reference PDF first 1,200 HTML chars: {beta_html[:1200]}")
+    else:
+        assert beta_html.startswith("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды, «бессмертные» портфели и стоицизм</strong></h1>"), beta_html
+        assert "<p><strong>это не инвестиционные рекомендации</strong></p>" in beta_html, beta_html
+        assert "<p>Сразу к делу, коллеги.</p>" in beta_html, beta_html
+        assert "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>" in beta_html, beta_html
+        assert beta_html.endswith("<p>На данном проекте периодически упоминается термин «старые деньги».</p>"), beta_html
+        assert "<h2>" not in beta_html and "<h3>" not in beta_html, beta_html
+        for chrome in ("sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"):
+            assert chrome not in beta_html, f"Sponsr publication chrome leaked: {beta_html}"
     assert "<h1><strong>06.11.2026 12:12</strong></h1>" in alpha_html, alpha_html
     assert "<h2><strong>Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>" in alpha_html, alpha_html
     assert "<h3><strong>У Европы кризис жанра</strong></h3>" in alpha_html, alpha_html
@@ -110,16 +151,20 @@ def main():
     assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic<strong> both</strong></em> styles.</p>" in alpha_html, alpha_html
     assert "<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране. Он трижды голосовал за Трампа; Трамп провёл здесь съезд всего два месяца назад.</em></p>" in alpha_html, alpha_html
     assert "<p><em>Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.</em></p>" in alpha_html, alpha_html
+    assert "<p><strong>это не инвестиционные рекомендации</strong></p>" in alpha_html, alpha_html
+    assert "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>" in alpha_html, alpha_html
+    assert "<p>Обычный текст после предуведомления.</p>\n<p>Колумнистка Bloomberg" in alpha_html, alpha_html
     assert "skladchik.ORG" not in alpha_html, "the final promotional page leaked into RSS content"
     assert "<p>1</p>" not in alpha_html, "the printed page label leaked into RSS content"
+    assert "<p>2</p>" not in alpha_html, "the second-page label after the front ad leaked into RSS content"
     no_redirect = urllib.request.build_opener(NoRedirect())
-    for title, filename in (("article-alpha", "article-alpha.pdf"), ("article-beta", "article-beta.pdf")):
+    for title, filename in (("article-alpha", "article-alpha.pdf"), (beta_title, beta_filename)):
         try:
             request(item_url_by_title[title], opener=no_redirect)
             raise AssertionError("document route did not return a redirect")
         except urllib.error.HTTPError as response:
             assert response.code in (301, 302, 303, 307, 308), response.code
-            assert response.headers["Location"] == f"https://fixture.invalid/current-month/{filename}"
+            assert urllib.parse.unquote(response.headers["Location"]) == f"https://fixture.invalid/current-month/{filename}", response.headers["Location"]
     for item in items:
         SafeMarkup().feed(item.findtext("description") or "")
 
@@ -142,16 +187,16 @@ def main():
     request(f"{MINIFLUX}/v1/feeds/{miniflux_feed_id}/refresh?force=true", method="PUT", headers=miniflux_headers)
     entries = wait_for(read_entries, "Miniflux to ingest two PDF articles")
     ids_before = {entry["title"]: entry["id"] for entry in entries}
-    assert set(ids_before) == {"article-alpha", "article-beta"}
+    assert set(ids_before) == {"article-alpha", beta_title}
     miniflux_urls = {entry["title"]: entry["url"] for entry in entries}
     assert miniflux_urls == item_url_by_title, f"Miniflux links must retain exact per-PDF targets: {miniflux_urls}"
-    for title, filename in (("article-alpha", "article-alpha.pdf"), ("article-beta", "article-beta.pdf")):
+    for title, filename in (("article-alpha", "article-alpha.pdf"), (beta_title, beta_filename)):
         try:
             request(miniflux_urls[title], opener=no_redirect)
             raise AssertionError("Miniflux document link did not return a redirect")
         except urllib.error.HTTPError as response:
             assert response.code in (301, 302, 303, 307, 308), response.code
-            assert response.headers["Location"] == f"https://fixture.invalid/current-month/{filename}"
+            assert urllib.parse.unquote(response.headers["Location"]) == f"https://fixture.invalid/current-month/{filename}", response.headers["Location"]
     alpha = next(entry for entry in entries if entry["title"] == "article-alpha")
     assert "Fixture article alpha" in alpha["content"]
     assert alpha["url"] == expected_links["article-alpha"]
@@ -159,6 +204,8 @@ def main():
     # Change bytes under the same fixture filename/provider identity, then re-ingest.
     import subprocess
     subprocess.run(["python", "/tests/e2e/generate_fixtures.py", "article-alpha.pdf"], check=True, env={**os.environ, "FIXTURE_ROOT": "/fixtures"})
+    if reference_pdf_test:
+        os.unlink(f"/fixtures/current-month/{beta_filename}")
     _, discovery = request(f"{APP}/api/management/months/{month_id}/discover", method="POST", opener=app_client)
     assert discovery["discovered_pdfs"] == 3
     _, documents = request(f"{APP}/api/management/months/{month_id}/documents", opener=app_client)
@@ -178,8 +225,12 @@ def main():
     assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic<strong> both</strong></em> styles.</p>" in refreshed_alpha_html, refreshed_alpha_html
     assert "<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране. Он трижды голосовал за Трампа; Трамп провёл здесь съезд всего два месяца назад.</em></p>" in refreshed_alpha_html, refreshed_alpha_html
     assert "<p><em>Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.</em></p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p><strong>это не инвестиционные рекомендации</strong></p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p>Обычный текст после предуведомления.</p>\n<p>Колумнистка Bloomberg" in refreshed_alpha_html, refreshed_alpha_html
     assert "skladchik.ORG" not in refreshed_alpha_html
     assert "<p>1</p>" not in refreshed_alpha_html
+    assert "<p>2</p>" not in refreshed_alpha_html
     refreshed_guids = {item.findtext("title"): item.findtext("guid") for item in refreshed_items}
     assert refreshed_guids == guid_by_title, "RSS GUIDs changed during refresh"
 
