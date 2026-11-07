@@ -17,7 +17,7 @@ MINIFLUX = os.environ["MINIFLUX_BASE_URL"].rstrip("/")
 
 
 class SafeMarkup(HTMLParser):
-    allowed = {"p", "br", "h1", "h2", "h3", "h4", "strong", "em", "ul", "ol", "li", "blockquote"}
+    allowed = {"p", "br", "h1", "h2", "h3", "strong", "em", "ul", "ol", "li", "blockquote"}
 
     def handle_starttag(self, tag, attrs):
         assert tag in self.allowed, f"unexpected HTML tag: {tag}"
@@ -82,6 +82,9 @@ def main():
     assert set(by_name) == {"article-alpha.pdf", "article-beta.pdf", "club-promotion.pdf"}
     for document in documents:
         request(f"{APP}/api/management/documents/{document['id']}/extract?force=true", method="POST", opener=app_client)
+    for document in documents:
+        _, extraction = request(f"{APP}/api/management/documents/{document['id']}/extract", method="POST", opener=app_client)
+        assert extraction["status"] == "cached", extraction
 
     rss_url = f"{RSS}/feeds/{feed_id}"
     _, rss_bytes = request(rss_url)
@@ -99,9 +102,14 @@ def main():
     assert item_url_by_title == expected_links, f"RSS links must be stable per-document redirects: {item_url_by_title}"
     alpha_item = next(item for item in items if item.findtext("title") == "article-alpha")
     alpha_html = alpha_item.findtext("description") or ""
-    assert "<h1><strong>Fixture article alpha</strong></h1>" in alpha_html, alpha_html
-    assert "<h2><strong>Typography</strong></h2>" in alpha_html, alpha_html
-    assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic</em><strong><em> both</em></strong> styles.</p>" in alpha_html, alpha_html
+    assert "<h1><strong>06.11.2026 12:12</strong></h1>" in alpha_html, alpha_html
+    assert "<h2><strong>Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>" in alpha_html, alpha_html
+    assert "<h3><strong>У Европы кризис жанра</strong></h3>" in alpha_html, alpha_html
+    assert "<p><strong>Нижний уровень заголовка</strong></p>" in alpha_html, alpha_html
+    assert "<h4>" not in alpha_html, alpha_html
+    assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic<strong> both</strong></em> styles.</p>" in alpha_html, alpha_html
+    assert "<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране. Он трижды голосовал за Трампа; Трамп провёл здесь съезд всего два месяца назад.</em></p>" in alpha_html, alpha_html
+    assert "<p><em>Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.</em></p>" in alpha_html, alpha_html
     assert "skladchik.ORG" not in alpha_html, "the final promotional page leaked into RSS content"
     assert "<p>1</p>" not in alpha_html, "the printed page label leaked into RSS content"
     no_redirect = urllib.request.build_opener(NoRedirect())
@@ -162,9 +170,14 @@ def main():
     assert len(refreshed_items) == 2
     refreshed_alpha_item = next(item for item in refreshed_items if item.findtext("title") == "article-alpha")
     refreshed_alpha_html = refreshed_alpha_item.findtext("description") or ""
-    assert "<h1><strong>Updated fixture article alpha</strong></h1>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<h2><strong>Typography</strong></h2>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p>Updated fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic</em><strong><em> both</em></strong> styles.</p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<h1><strong>06.11.2026 12:12</strong></h1>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<h2><strong>Обновлённый Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<h3><strong>У Европы кризис жанра</strong></h3>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p><strong>Нижний уровень заголовка</strong></p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<h4>" not in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic<strong> both</strong></em> styles.</p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране. Он трижды голосовал за Трампа; Трамп провёл здесь съезд всего два месяца назад.</em></p>" in refreshed_alpha_html, refreshed_alpha_html
+    assert "<p><em>Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.</em></p>" in refreshed_alpha_html, refreshed_alpha_html
     assert "skladchik.ORG" not in refreshed_alpha_html
     assert "<p>1</p>" not in refreshed_alpha_html
     refreshed_guids = {item.findtext("title"): item.findtext("guid") for item in refreshed_items}
@@ -176,7 +189,7 @@ def main():
     ids_after = {entry["title"]: entry["id"] for entry in updated_entries}
     assert ids_after == ids_before, "Miniflux changed entry identity after content refresh"
     updated_alpha = next(entry for entry in updated_entries if entry["title"] == "article-alpha")
-    assert "Updated fixture article alpha" in updated_alpha["content"]
+    assert "Обновлённый Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов" in updated_alpha["content"]
     print("Miniflux E2E passed: subscription, safe RSS items, promotional exclusion, stable GUIDs, no duplicates, refreshed content.")
 
 

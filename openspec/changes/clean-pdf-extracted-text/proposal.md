@@ -9,8 +9,8 @@ PDFs in the shared source folder include a repeated promotional final page and p
 - Remove a matching Skladchik promotional page when it is the final PDF page.
 - Omit standalone page labels extracted at the start of their corresponding pages.
 - Join wrapped lines within paragraphs while preserving paragraph boundaries.
-- Detect headings and represent their hierarchy with semantic `<h1>` through `<h4>` tags.
-- Preserve bold and italic emphasis with semantic `<strong>` and `<em>` tags.
+- Detect headings and represent their hierarchy with semantic `<h1>` through `<h3>` tags, combining visual continuation lines into one logical heading and keeping lower-level text as paragraphs.
+- Preserve bold and italic emphasis with semantic `<strong>` and `<em>` tags, merging same-style runs and whitespace-only separators into one span within paragraphs and headings.
 
 ## Capabilities
 

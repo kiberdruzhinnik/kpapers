@@ -36,18 +36,30 @@ The system SHALL join line-wrapped text within a paragraph using spaces while pr
 - **THEN** each paragraph remains distinct in the resulting HTML
 
 ### Requirement: Render PDF headings with semantic levels
-The system SHALL identify headings from PDF typography and layout and render them using semantic heading tags from `<h1>` through `<h4>` according to their document hierarchy. The document title uses `<h1>`, top-level sections use `<h2>`, and nested headings use `<h3>` or `<h4>` as appropriate. Ordinary prose remains paragraph content.
+The system SHALL identify headings from PDF typography and layout and render them using semantic heading tags from `<h1>` through `<h3>` according to their document hierarchy. The document title uses `<h1>`, top-level headings use `<h2>`, and nested headings use `<h3>`. Visual continuation lines of one logical heading SHALL be combined with whitespace between words. Text that would otherwise be classified below `<h3>` SHALL remain paragraph content.
 
-#### Scenario: Render document title and section hierarchy
+#### Scenario: Render document title and supported section hierarchy
 - **WHEN** a PDF contains a title and visually distinct section and subsection headings
-- **THEN** the title is rendered as `<h1>`, sections as `<h2>`, and nested headings at the matching `<h3>` or `<h4>` level
+- **THEN** the title is rendered as `<h1>`, sections as `<h2>`, and nested headings as `<h3>`
 
 #### Scenario: Preserve ordinary prose as paragraphs
 - **WHEN** extracted text is ordinary body prose rather than a heading
 - **THEN** it remains rendered as paragraph content and is not promoted to a heading
 
+#### Scenario: Keep a wrapped document title as one heading
+- **WHEN** the document title wraps across multiple PDF lines but remains one logical title
+- **THEN** all title text is rendered in one `<h1>` with spaces between the wrapped lines, not split into separate heading levels
+
+#### Scenario: Keep a wrapped section headline as one heading
+- **WHEN** a top-level headline wraps across multiple PDF lines but remains one logical heading
+- **THEN** all headline text is rendered in one `<h2>` with spaces between the wrapped lines
+
+#### Scenario: Keep lower-level heading candidates as paragraphs
+- **WHEN** typography and layout would classify a line below the supported `<h3>` level
+- **THEN** its text is rendered as a paragraph and no `<h4>` element is emitted
+
 ### Requirement: Preserve bold and italic PDF styling
-The system SHALL represent bold text with `<strong>` and italic text with `<em>`, including both tags when a text run has both styles, while leaving normally styled text unwrapped.
+The system SHALL represent bold text with `<strong>` and italic text with `<em>`, including both tags when a text run has both styles, while leaving normally styled text unwrapped. Adjacent text runs with the same style SHALL be merged into continuous semantic tags within a paragraph or heading, including when separated only by a whitespace run; spaces and actual block boundaries SHALL be preserved.
 
 #### Scenario: Render bold and italic runs
 - **WHEN** a PDF text run uses bold or italic styling
@@ -60,3 +72,15 @@ The system SHALL represent bold text with `<strong>` and italic text with `<em>`
 #### Scenario: Preserve normal text
 - **WHEN** a PDF text run has neither bold nor italic styling
 - **THEN** the resulting HTML does not add emphasis tags around it
+
+#### Scenario: Merge adjacent runs with the same style
+- **WHEN** consecutive runs within one paragraph use the same italic style
+- **THEN** their text is rendered inside one continuous `<em>` element with intervening spaces preserved
+
+#### Scenario: Merge same-style runs inside a heading
+- **WHEN** date and time text inside one heading are emitted as adjacent bold runs separated only by whitespace
+- **THEN** both values are rendered inside one `<strong>` element with one space between them
+
+#### Scenario: Preserve nested style changes and paragraph boundaries
+- **WHEN** a bold run appears inside an italic paragraph and the document has a paragraph break before the next italic text
+- **THEN** bold is nested inside the continuous italic span, and the next paragraph remains a separate paragraph

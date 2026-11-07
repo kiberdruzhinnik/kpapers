@@ -8,7 +8,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 2;
+const EXTRACTION_PIPELINE_REVISION: u32 = 3;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -84,13 +84,10 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             }
 
             let line_break = force_new_line
-                || previous_y.is_some_and(|last_y| {
-                    (last_y - y).abs() > size.max(previous_size) * 0.5
-                });
+                || previous_y
+                    .is_some_and(|last_y| (last_y - y).abs() > size.max(previous_size) * 0.5);
             if line_break || lines.is_empty() {
-                let gap_before = previous_y
-                    .map(|last_y| (last_y - y).abs())
-                    .unwrap_or(0.0);
+                let gap_before = previous_y.map(|last_y| (last_y - y).abs()).unwrap_or(0.0);
                 lines.push(StyledLine {
                     runs: Vec::new(),
                     size,
@@ -122,6 +119,9 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             previous_size = size;
         }
 
+        for line in &mut lines {
+            trim_run_edges(&mut line.runs);
+        }
         lines.retain(|line| !line.text().trim().is_empty());
         if let Some(first) = lines.iter().position(|line| !line.text().trim().is_empty()) {
             if lines[first].text().trim() == (page_index + 1).to_string() {
@@ -272,9 +272,7 @@ pub fn text_to_safe_html(text: &str) -> String {
     text.split("\n\n")
         .map(str::trim)
         .filter(|paragraph| !paragraph.is_empty())
-        .map(|paragraph| {
-            format!("<p>{}</p>", escape_html(paragraph))
-        })
+        .map(|paragraph| format!("<p>{}</p>", escape_html(paragraph)))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -286,17 +284,65 @@ fn escape_html(text: &str) -> String {
 }
 
 fn styled_runs_html(runs: &[StyledRun]) -> String {
-    runs.iter()
-        .map(|run| {
-            let text = escape_html(&run.text);
-            match (run.bold, run.italic) {
-                (true, true) => format!("<strong><em>{text}</em></strong>"),
-                (true, false) => format!("<strong>{text}</strong>"),
-                (false, true) => format!("<em>{text}</em>"),
-                (false, false) => text,
-            }
-        })
-        .collect()
+    let mut coalesced = Vec::new();
+    let mut index = 0;
+    while index < runs.len() {
+        let run = &runs[index];
+        if run.text.chars().all(char::is_whitespace)
+            && !coalesced.is_empty()
+            && index + 1 < runs.len()
+            && coalesced.last().is_some_and(|last: &StyledRun| {
+                last.bold == runs[index + 1].bold && last.italic == runs[index + 1].italic
+            })
+        {
+            coalesced
+                .last_mut()
+                .expect("checked above")
+                .text
+                .push_str(&run.text);
+            coalesced
+                .last_mut()
+                .expect("checked above")
+                .text
+                .push_str(&runs[index + 1].text);
+            index += 2;
+            continue;
+        }
+        append_runs(&mut coalesced, std::slice::from_ref(run));
+        index += 1;
+    }
+
+    let mut html = String::new();
+    let mut open_tags: Vec<&str> = Vec::new();
+    for run in &coalesced {
+        // Keep italic as the outer element so bold phrases inside an italic
+        // passage do not split the passage into repeated <em> elements.
+        let mut tags = Vec::new();
+        if run.italic {
+            tags.push("em");
+        }
+        if run.bold {
+            tags.push("strong");
+        }
+
+        let shared = open_tags
+            .iter()
+            .zip(&tags)
+            .take_while(|(open, wanted)| open == wanted)
+            .count();
+        for tag in open_tags[shared..].iter().rev() {
+            html.push_str(&format!("</{tag}>"));
+        }
+        for tag in &tags[shared..] {
+            html.push_str(&format!("<{tag}>"));
+        }
+        open_tags = tags;
+        html.push_str(&escape_html(&run.text));
+    }
+    for tag in open_tags.iter().rev() {
+        html.push_str(&format!("</{tag}>"));
+    }
+    html
 }
 
 fn append_runs(target: &mut Vec<StyledRun>, runs: &[StyledRun]) {
@@ -312,7 +358,119 @@ fn append_runs(target: &mut Vec<StyledRun>, runs: &[StyledRun]) {
     }
 }
 
+fn trim_run_edges(runs: &mut Vec<StyledRun>) {
+    if let Some(first) = runs.first_mut() {
+        first.text = first.text.trim_start().to_owned();
+    }
+    if let Some(last) = runs.last_mut() {
+        last.text = last.text.trim_end().to_owned();
+    }
+    runs.retain(|run| !run.text.is_empty());
+}
+
+fn first_content_style(line: &StyledLine) -> Option<(bool, bool)> {
+    line.runs
+        .iter()
+        .find(|run| !run.text.trim().is_empty())
+        .map(|run| (run.bold, run.italic))
+}
+
+fn last_content_style(line: &StyledLine) -> Option<(bool, bool)> {
+    line.runs
+        .iter()
+        .rev()
+        .find(|run| !run.text.trim().is_empty())
+        .map(|run| (run.bold, run.italic))
+}
+
+fn push_line_separator(target: &mut Vec<StyledRun>, next_runs: &[StyledRun]) {
+    let Some(previous) = target.last() else {
+        return;
+    };
+    let next = next_runs.first();
+    let previous_has_space = previous
+        .text
+        .chars()
+        .last()
+        .is_some_and(char::is_whitespace);
+    let next_has_space = next
+        .and_then(|run| run.text.chars().next())
+        .is_some_and(char::is_whitespace);
+    if previous_has_space || next_has_space {
+        return;
+    }
+    let bold = next.is_some_and(|next| previous.bold && next.bold);
+    let italic = next.is_some_and(|next| previous.italic && next.italic);
+    push_styled_char(target, ' ', bold, italic);
+}
+
+fn merge_wrapped_title_lines(pages: &mut [Vec<StyledLine>]) {
+    let all_lines = pages
+        .iter()
+        .flatten()
+        .filter(|line| !line.text().trim().is_empty())
+        .collect::<Vec<_>>();
+    if all_lines.is_empty() {
+        return;
+    }
+
+    let mut sizes = all_lines.iter().map(|line| line.size).collect::<Vec<_>>();
+    sizes.sort_by(f32::total_cmp);
+    let mut size_counts = Vec::<(f32, usize)>::new();
+    for size in sizes {
+        if let Some((_, count)) = size_counts
+            .iter_mut()
+            .find(|(known, _)| (size - *known).abs() < 0.5)
+        {
+            *count += 1;
+        } else {
+            size_counts.push((size, 1));
+        }
+    }
+    let body_size = size_counts
+        .iter()
+        .map(|(size, _)| *size)
+        .min_by(f32::total_cmp)
+        .unwrap_or(12.0)
+        .max(1.0);
+
+    for page in pages {
+        let mut line_index = 0;
+        while line_index + 1 < page.len() {
+            let previous = &page[line_index];
+            let next = &page[line_index + 1];
+            let is_heading_sized = |line: &StyledLine| {
+                line.text().chars().count() <= 160 && line.size >= body_size * 1.08
+            };
+            let similar_size =
+                (previous.size - next.size).abs() <= previous.size.max(next.size) * 0.05;
+            let tight_leading = next.gap_before <= previous.size * 1.55;
+            let matching_style = last_content_style(previous)
+                .zip(first_content_style(next))
+                .is_some_and(|(before, after)| before == after);
+            if !(is_heading_sized(previous)
+                && is_heading_sized(next)
+                && similar_size
+                && tight_leading
+                && matching_style)
+            {
+                line_index += 1;
+                continue;
+            }
+
+            let next = page.remove(line_index + 1);
+            let previous = &mut page[line_index];
+            push_line_separator(&mut previous.runs, &next.runs);
+            append_runs(&mut previous.runs, &next.runs);
+            previous.size = previous.size.max(next.size);
+        }
+    }
+}
+
 fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
+    let mut grouped_pages = pages.to_vec();
+    merge_wrapped_title_lines(&mut grouped_pages);
+    let pages = grouped_pages.as_slice();
     let all_lines = pages
         .iter()
         .flatten()
@@ -337,16 +495,14 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     }
     let body_size = size_counts
         .iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.total_cmp(&a.0)))
         .map(|(size, _)| *size)
+        .min_by(f32::total_cmp)
         .unwrap_or(12.0)
         .max(1.0);
     let heading_candidates = all_lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| {
-            line.text().chars().count() <= 160 && line.size >= body_size * 1.08
-        })
+        .filter(|(_, line)| line.text().chars().count() <= 160 && line.size >= body_size * 1.08)
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let title_index = heading_candidates.first().copied();
@@ -380,14 +536,12 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
                 let level = heading_sizes
                     .iter()
                     .position(|size| (line.size - *size).abs() < 0.5)
-                    .unwrap_or(0)
-                    .min(2)
-                    + 2;
-                Some(match level {
-                    2 => "h2",
-                    3 => "h3",
-                    _ => "h4",
-                })
+                    .unwrap_or(usize::MAX);
+                match level {
+                    0 => Some("h2"),
+                    1 => Some("h3"),
+                    _ => None,
+                }
             } else {
                 None
             };
@@ -398,15 +552,12 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
                 }
                 blocks.push((tag.to_owned(), line.runs.clone()));
             } else {
-                let paragraph_break = previous_line.is_some_and(|previous| {
-                    line.gap_before > line.size.max(previous.size) * 1.8
-                });
+                let paragraph_break = previous_line
+                    .is_some_and(|previous| line.gap_before > line.size.max(previous.size) * 1.8);
                 if paragraph_break && !paragraph.is_empty() {
                     blocks.push(("p".to_owned(), std::mem::take(&mut paragraph)));
                 }
-                if !paragraph.is_empty() {
-                    push_styled_char(&mut paragraph, ' ', false, false);
-                }
+                push_line_separator(&mut paragraph, &line.runs);
                 append_runs(&mut paragraph, &line.runs);
             }
             previous_line = Some(line);
@@ -459,12 +610,17 @@ mod tests {
 
     #[test]
     fn promotion_match_requires_all_distinctive_signals() {
-        assert!(!is_skladchik_promotion("skladchik.ORG and Ты еще не в Клубе?"));
+        assert!(!is_skladchik_promotion(
+            "skladchik.ORG and Ты еще не в Клубе?"
+        ));
     }
 
     #[test]
     fn strips_matching_number_from_first_nonempty_line() {
-        assert_eq!(strip_page_label("\n  2  \nArticle starts here", 2), "\nArticle starts here");
+        assert_eq!(
+            strip_page_label("\n  2  \nArticle starts here", 2),
+            "\nArticle starts here"
+        );
     }
 
     #[test]
@@ -476,26 +632,38 @@ mod tests {
     #[test]
     fn joins_wrapped_lines_inside_a_paragraph() {
         let input = "Четверг, ув. друзья, и самое время вступить на офигенно скользкий лёд и\nпройтись под его весёлый хруст по настоящему и будущему великой\nстраны.";
-        assert_eq!(normalize_text(input), "Четверг, ув. друзья, и самое время вступить на офигенно скользкий лёд и пройтись под его весёлый хруст по настоящему и будущему великой страны.");
+        assert_eq!(
+            normalize_text(input),
+            "Четверг, ув. друзья, и самое время вступить на офигенно скользкий лёд и пройтись под его весёлый хруст по настоящему и будущему великой страны."
+        );
     }
 
     #[test]
     fn preserves_paragraph_heading_and_list_boundaries() {
-        let input = "Heading\n\nFirst paragraph wraps\nover two lines.\n\n- First item\n\n- Second item";
-        assert_eq!(normalize_text(input), "Heading\n\nFirst paragraph wraps over two lines.\n\n- First item\n\n- Second item");
+        let input =
+            "Heading\n\nFirst paragraph wraps\nover two lines.\n\n- First item\n\n- Second item";
+        assert_eq!(
+            normalize_text(input),
+            "Heading\n\nFirst paragraph wraps over two lines.\n\n- First item\n\n- Second item"
+        );
     }
 
     #[test]
     fn safe_html_uses_reflowed_paragraphs_and_keeps_escaping() {
-        let normalized = normalize_text("First <span> wraps\nline & continues.\n\nSecond paragraph.");
-        assert_eq!(text_to_safe_html(&normalized), "<p>First &lt;span&gt; wraps line &amp; continues.</p>\n<p>Second paragraph.</p>");
+        let normalized =
+            normalize_text("First <span> wraps\nline & continues.\n\nSecond paragraph.");
+        assert_eq!(
+            text_to_safe_html(&normalized),
+            "<p>First &lt;span&gt; wraps line &amp; continues.</p>\n<p>Second paragraph.</p>"
+        );
     }
 
     #[test]
     fn cache_fingerprint_invalidates_old_entries_and_is_stable() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert!(processed.starts_with("pdf-text-v2:"));
+        assert!(processed.starts_with("pdf-text-v3:"));
+        assert_ne!(processed, format!("pdf-text-v2:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
     }
@@ -505,39 +673,323 @@ mod tests {
         let mut runs = Vec::new();
         push_styled_char(&mut runs, '<', true, false);
         let runs = vec![
-            runs.pop().map(|mut run| { run.text.push_str("bold>"); run }).unwrap(),
-            StyledRun { text: "italic".into(), bold: false, italic: true },
-            StyledRun { text: "both".into(), bold: true, italic: true },
-            StyledRun { text: "plain & safe".into(), bold: false, italic: false },
+            runs.pop()
+                .map(|mut run| {
+                    run.text.push_str("bold>");
+                    run
+                })
+                .unwrap(),
+            StyledRun {
+                text: "italic".into(),
+                bold: false,
+                italic: true,
+            },
+            StyledRun {
+                text: "both".into(),
+                bold: true,
+                italic: true,
+            },
+            StyledRun {
+                text: "plain & safe".into(),
+                bold: false,
+                italic: false,
+            },
         ];
-        assert_eq!(super::styled_runs_html(&runs), "<strong>&lt;bold&gt;</strong><em>italic</em><strong><em>both</em></strong>plain &amp; safe");
+        assert_eq!(
+            super::styled_runs_html(&runs),
+            "<strong>&lt;bold&gt;</strong><em>italic<strong>both</strong></em>plain &amp; safe"
+        );
+    }
+
+    #[test]
+    fn merges_same_style_runs_across_whitespace_only_run() {
+        let runs = vec![
+            StyledRun {
+                text: "06.11.2026".into(),
+                bold: true,
+                italic: false,
+            },
+            StyledRun {
+                text: " ".into(),
+                bold: false,
+                italic: false,
+            },
+            StyledRun {
+                text: "12:12".into(),
+                bold: true,
+                italic: false,
+            },
+        ];
+        assert_eq!(
+            super::styled_runs_html(&runs),
+            "<strong>06.11.2026 12:12</strong>"
+        );
+    }
+
+    #[test]
+    fn merges_italic_runs_around_nested_bold_and_keeps_paragraph_breaks() {
+        let page = vec![
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Attribution text".into(),
+                    bold: false,
+                    italic: false,
+                }],
+                size: 12.0,
+                gap_before: 0.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "«Техас — крупнейший ".into(),
+                    bold: false,
+                    italic: true,
+                }],
+                size: 12.0,
+                gap_before: 32.0,
+            },
+            StyledLine {
+                runs: vec![
+                    StyledRun {
+                        text: "красный".into(),
+                        bold: true,
+                        italic: true,
+                    },
+                    StyledRun {
+                        text: " штат в стране.".into(),
+                        bold: false,
+                        italic: true,
+                    },
+                ],
+                size: 12.0,
+                gap_before: 16.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Демократ Джеймс Таларико".into(),
+                    bold: false,
+                    italic: true,
+                }],
+                size: 12.0,
+                gap_before: 32.0,
+            },
+        ];
+        assert_eq!(
+            lines_to_html(&[page]),
+            "<p>Attribution text</p>\n<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране.</em></p>\n<p><em>Демократ Джеймс Таларико</em></p>"
+        );
+    }
+
+    #[test]
+    fn wrapped_document_title_is_one_h1() {
+        let page = vec![
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Ядерный Ливан. Путеводитель по".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 0.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "выборам и будущему США".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 27.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Сегодня для нас нет ничего актуальней сдвигов.".into(),
+                    bold: false,
+                    italic: false,
+                }],
+                size: 12.0,
+                gap_before: 40.0,
+            },
+        ];
+        let html = lines_to_html(&[page]);
+        assert!(
+            html.starts_with(
+                "<h1><strong>Ядерный Ливан. Путеводитель по выборам и будущему США</strong></h1>"
+            ),
+            "{html}"
+        );
+        assert!(!html.contains("<h2><strong>выборам"), "{html}");
+        assert!(
+            html.contains("<p>Сегодня для нас нет ничего актуальней сдвигов.</p>"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn wrapped_top_level_headline_is_one_h2() {
+        let page = vec![
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "06.11.2026 12:12".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 14.0,
+                gap_before: 0.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Дмитриев у Трампов, трудности у".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 35.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "танкеров, мегаполисы США у".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 26.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "социалистов".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 26.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "У Европы кризис жанра".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 16.0,
+                gap_before: 40.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Body text".into(),
+                    bold: false,
+                    italic: false,
+                }],
+                size: 12.0,
+                gap_before: 36.0,
+            },
+        ];
+        let html = lines_to_html(&[page]);
+        assert!(
+            html.contains("<h1><strong>06.11.2026 12:12</strong></h1>"),
+            "{html}"
+        );
+        assert!(html.contains("<h2><strong>Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>"), "{html}");
+        assert!(
+            html.contains("<h3><strong>У Европы кризис жанра</strong></h3>"),
+            "{html}"
+        );
     }
 
     #[test]
     fn detects_heading_hierarchy_and_keeps_body_as_paragraphs() {
         let page = vec![
-            StyledLine { runs: vec![StyledRun { text: "Document title".into(), bold: true, italic: false }], size: 22.0, gap_before: 0.0 },
-            StyledLine { runs: vec![StyledRun { text: "Section".into(), bold: true, italic: false }], size: 16.0, gap_before: 16.0 },
-            StyledLine { runs: vec![StyledRun { text: "Body text".into(), bold: false, italic: false }], size: 12.0, gap_before: 16.0 },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Document title".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 0.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Section".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 16.0,
+                gap_before: 16.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Body text".into(),
+                    bold: false,
+                    italic: false,
+                }],
+                size: 12.0,
+                gap_before: 16.0,
+            },
         ];
         let html = lines_to_html(&[page]);
-        assert_eq!(html, "<h1><strong>Document title</strong></h1>\n<h2><strong>Section</strong></h2>\n<p>Body text</p>");
+        assert_eq!(
+            html,
+            "<h1><strong>Document title</strong></h1>\n<h2><strong>Section</strong></h2>\n<p>Body text</p>"
+        );
     }
 
     #[test]
     fn detects_nested_heading_levels() {
         let page = vec![
-            StyledLine { runs: vec![StyledRun { text: "Title".into(), bold: true, italic: false }], size: 22.0, gap_before: 0.0 },
-            StyledLine { runs: vec![StyledRun { text: "Section".into(), bold: true, italic: false }], size: 16.0, gap_before: 16.0 },
-            StyledLine { runs: vec![StyledRun { text: "Subsection".into(), bold: true, italic: false }], size: 14.0, gap_before: 16.0 },
-            StyledLine { runs: vec![StyledRun { text: "Nested subsection".into(), bold: false, italic: true }], size: 13.0, gap_before: 16.0 },
-            StyledLine { runs: vec![StyledRun { text: "Body".into(), bold: false, italic: false }], size: 12.0, gap_before: 16.0 },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Title".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 22.0,
+                gap_before: 0.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Section".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 16.0,
+                gap_before: 16.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Subsection".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 14.0,
+                gap_before: 16.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Nested subsection".into(),
+                    bold: false,
+                    italic: true,
+                }],
+                size: 13.0,
+                gap_before: 32.0,
+            },
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Body".into(),
+                    bold: false,
+                    italic: false,
+                }],
+                size: 12.0,
+                gap_before: 32.0,
+            },
         ];
         let html = lines_to_html(&[page]);
         assert!(html.contains("<h1><strong>Title</strong></h1>"), "{html}");
         assert!(html.contains("<h2><strong>Section</strong></h2>"), "{html}");
-        assert!(html.contains("<h3><strong>Subsection</strong></h3>"), "{html}");
-        assert!(html.contains("<h4><em>Nested subsection</em></h4>"), "{html}");
+        assert!(
+            html.contains("<h3><strong>Subsection</strong></h3>"),
+            "{html}"
+        );
+        assert!(html.contains("<p><em>Nested subsection</em></p>"), "{html}");
+        assert!(!html.contains("<h4>"), "{html}");
         assert!(html.ends_with("<p>Body</p>"), "{html}");
     }
 }

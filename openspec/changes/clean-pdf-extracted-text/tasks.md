@@ -26,3 +26,15 @@
 
 - [x] 5.1 Advance the extraction-pipeline revision from `pdf-text-v1` to `pdf-text-v2`; verify existing v1 cache entries miss once and v2 entries are reused on subsequent unchanged refreshes.
 - [x] 5.2 Pin compatible `pdfium-render` and Pdfium runtime versions, package the native library in the API runtime container, and verify the container starts and extracts a fixture PDF.
+
+## 6. Refine wrapped heading and styled-run grouping
+
+- [x] 6.1 Group visual continuation lines of a document title into one logical `<h1>` with spaces between lines; add unit coverage for wrapped titles and ensure continuation lines are not emitted as separate headings.
+- [x] 6.2 Coalesce adjacent text runs with identical bold/italic styles within each paragraph while preserving whitespace, nested style transitions, and paragraph boundaries; add unit and end-to-end coverage for a continuous italic quote with an embedded bold phrase and a separate following paragraph.
+
+## 7. Normalize headings in dated headline materials
+
+- [x] 7.1 Merge adjacent same-style runs separated only by whitespace inside headings; add unit and E2E coverage that renders a bold date and time as one `<strong>` span.
+- [x] 7.2 Group visual continuation lines of a top-level headline into one `<h2>` with spaces between lines; add unit and E2E coverage for the supplied three-line headline.
+- [x] 7.3 Stop emitting `<h4>` elements and render heading candidates below `<h3>` as paragraphs; add unit and E2E coverage.
+- [x] 7.4 Advance the extraction-pipeline revision from `pdf-text-v2` to `pdf-text-v3`; verify existing v2 cache entries miss once and v3 entries are reused on subsequent unchanged refreshes.

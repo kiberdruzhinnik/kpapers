@@ -91,14 +91,30 @@ def main() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     changed = sys.argv[1] if len(sys.argv) > 1 else ""
     ad = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?"
-    updated_title = "Updated fixture article alpha" if changed == "article-alpha.pdf" else "Fixture article alpha"
+    headline_first_line = (
+        "Обновлённый Дмитриев у Трампов, трудности у"
+        if changed == "article-alpha.pdf"
+        else "Дмитриев у Трампов, трудности у"
+    )
     typography_page = [
         [("1", 12, "F1")],
-        [(updated_title, 22, "F2")],
-        [("Typography", 16, "F2")],
-        [(updated_title + " wraps", 12, "F1")],
+        [("06.11.2026", 14, "F2"), (" ", 14, "F1"), ("12:12", 14, "F2")],
+        [(headline_first_line, 22, "F2")],
+        [("танкеров, мегаполисы США у", 22, "F2")],
+        [("социалистов", 22, "F2")],
+        [("У Европы кризис жанра", 16, "F2")],
+        [("Нижний уровень заголовка", 13, "F2")],
+        [],
+        [("Fixture article alpha wraps", 12, "F1")],
         [("across two lines.", 12, "F1")],
         [("Bold ", 12, "F2"), ("italic", 12, "F3"), (" both", 12, "F4"), (" styles.", 12, "F1")],
+        [],
+        [("Колумнистка Bloomberg по этому поводу пишет:", 12, "F1")],
+        [],
+        [("«Техас — крупнейший ", 12, "F3"), ("красный", 12, "F4"), (" штат в стране. Он трижды голосовал за", 12, "F3")],
+        [("Трампа; Трамп провёл здесь съезд всего два месяца назад.", 12, "F3")],
+        [],
+        [("Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.", 12, "F3")],
     ]
     (ROOT / "article-alpha.pdf").write_bytes(pdf_pages([typography_page, ad]))
     (ROOT / "article-beta.pdf").write_bytes(pdf("1\nFixture article beta"))
