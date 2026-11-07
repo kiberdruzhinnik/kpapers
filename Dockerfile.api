@@ -24,7 +24,8 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --uid 10001 app
+    && groupadd --system --gid 568 app \
+    && useradd --system --create-home --uid 568 --gid app app
 COPY --from=builder /app/target/release/kpapers-api /usr/local/bin/kpapers-api
 COPY --from=pdfium /usr/local/lib/libpdfium.so /usr/local/lib/libpdfium.so
 RUN ldconfig

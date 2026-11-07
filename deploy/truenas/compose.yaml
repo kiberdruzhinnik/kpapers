@@ -1,0 +1,42 @@
+services:
+  api:
+    image: ghcr.io/kiberdruzhinnik/kpapers-api:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:///data/kpapers.sqlite?mode=rwc
+    volumes:
+      - kpapers_data:/data
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/kpapers-api", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/kiberdruzhinnik/kpapers-web:${IMAGE_TAG:-latest}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8080}:80"
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  kpapers_data:
+    name: kpapers_truenas_data
+
+networks:
+  app:
+    driver: bridge
