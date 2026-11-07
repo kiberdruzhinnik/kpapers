@@ -3,7 +3,7 @@
 ## 1. Publish API and web images
 
 - [x] 1.1 Update the API image to run as UID:GID `568:568` and own `/data` accordingly, then add a GitHub Actions workflow that builds amd64-only API and web images, publishes default-branch and version tags to GHCR with `GITHUB_TOKEN`, and builds pull requests without publishing; verify image filesystem ownership and workflow syntax/trigger behavior with static validation.
-- [ ] 1.2 Configure the GHCR API and web packages as public after their first workflow publish, then verify each can be pulled anonymously by image reference.
+- [x] 1.2 Configure the GHCR API and web packages as public after their first workflow publish, then verify each can be pulled anonymously by image reference.
 
 ## 2. Add TrueNAS deployment files and instructions
 
