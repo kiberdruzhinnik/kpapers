@@ -7,7 +7,7 @@ The existing `compose.yaml` builds two services: `api` from `Dockerfile.api` and
 ## Goals / Non-Goals
 
 **Goals:**
-- Publish versioned, multi-platform images that match both existing build contexts.
+- Publish versioned amd64 images that match both existing build contexts.
 - Make the deployment example usable from a TrueNAS SCALE app directory with only Compose, an `.env` file, and public image pulls.
 - Preserve current API health checks, web-to-API routing, and database persistence.
 - Run the published API process and own `/data` as UID:GID `568:568` so TrueNAS dataset permissions align with the host's `app` identity.
@@ -22,7 +22,7 @@ The existing `compose.yaml` builds two services: `api` from `Dockerfile.api` and
 
 ### Publish separate API and web packages to GHCR
 
-Use `ghcr.io/${owner}/kpapers-api` and `ghcr.io/${owner}/kpapers-web`, built from the existing Dockerfiles. Change the API image's application UID and `/data` ownership to `568:568`, so named volumes and TrueNAS datasets can be written using the conventional `app` identity. Build and publish `linux/amd64` and `linux/arm64` manifests, matching the API's supported Pdfium architectures and typical NAS hosts. Use GitHub Actions Buildx and the workflow's `GITHUB_TOKEN` with `packages: write`; set package visibility to public as a one-time package setting because workflow permissions alone do not make packages public.
+Use `ghcr.io/${owner}/kpapers-api` and `ghcr.io/${owner}/kpapers-web`, built from the existing Dockerfiles. Change the API image's application UID and `/data` ownership to `568:568`, so named volumes and TrueNAS datasets can be written using the conventional `app` identity. Build and publish `linux/amd64` images only; ARM64 hosts are outside this deployment's supported targets. Use GitHub Actions Buildx and the workflow's `GITHUB_TOKEN` with `packages: write`; set package visibility to public as a one-time package setting because workflow permissions alone do not make packages public.
 
 Tag default-branch builds as `latest` and with the short commit SHA. Tag version releases with the version tag as well as the short SHA. Avoid publishing mutable `latest` from arbitrary branches or pull requests. Pull requests may build without publishing to catch Dockerfile failures.
 

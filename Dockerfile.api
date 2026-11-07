@@ -30,7 +30,7 @@ COPY --from=builder /app/target/release/kpapers-api /usr/local/bin/kpapers-api
 COPY --from=pdfium /usr/local/lib/libpdfium.so /usr/local/lib/libpdfium.so
 RUN ldconfig
 RUN mkdir -p /data && chown app:app /data
-USER 10001:10001
+USER 568:568
 ENV DATABASE_URL=sqlite:///data/kpapers.sqlite?mode=rwc
 VOLUME ["/data"]
 EXPOSE 8080

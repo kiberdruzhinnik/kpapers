@@ -2,7 +2,7 @@
 
 ## 1. Publish API and web images
 
-- [x] 1.1 Update the API image to run as UID:GID `568:568` and own `/data` accordingly, then add a GitHub Actions workflow that builds amd64 and arm64 API and web images, publishes default-branch and version tags to GHCR with `GITHUB_TOKEN`, and builds pull requests without publishing; verify image filesystem ownership and workflow syntax/trigger behavior with a workflow linter or equivalent static validation.
+- [x] 1.1 Update the API image to run as UID:GID `568:568` and own `/data` accordingly, then add a GitHub Actions workflow that builds amd64-only API and web images, publishes default-branch and version tags to GHCR with `GITHUB_TOKEN`, and builds pull requests without publishing; verify image filesystem ownership and workflow syntax/trigger behavior with static validation.
 - [ ] 1.2 Configure the GHCR API and web packages as public after their first workflow publish, then verify each can be pulled anonymously by image reference.
 
 ## 2. Add TrueNAS deployment files and instructions
@@ -13,5 +13,5 @@
 
 ## 3. Verify deployment integration
 
-- [ ] 3.1 Build both images locally for supported targets and run the TrueNAS Compose stack against them; verify the web health check succeeds, web requests reach the API, and the database survives container recreation.
-- [ ] 3.2 Exercise a production-style upgrade from the previous database schema; verify migrations run before serving, existing data is retained, and a forced migration failure prevents the API health check from passing.
+- [x] 3.1 Build both images locally for `linux/amd64` and run the TrueNAS Compose stack against them; verify the web health check succeeds, web requests reach the API, and the database survives container recreation.
+- [x] 3.2 Exercise a production-style upgrade from the previous database schema; verify migrations run before serving, existing data is retained, and a forced migration failure prevents the API health check from passing.
