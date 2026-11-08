@@ -125,7 +125,7 @@ pub async fn login(
                 .verify_password(input.password.as_bytes(), &hash)
                 .is_ok()
         });
-    if input.username != &*auth.username || !valid_password {
+    if input.username != *auth.username || !valid_password {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let mut nonce = [0u8; 16];

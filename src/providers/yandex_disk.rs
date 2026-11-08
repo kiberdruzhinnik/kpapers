@@ -7,7 +7,7 @@ const API: &str = "https://cloud-api.yandex.net/v1/disk/public/resources";
 #[derive(Deserialize)]
 pub(crate) struct ResourcePage {
     #[serde(rename = "public_url")]
-    public_url: Option<String>,
+    _public_url: Option<String>,
     #[serde(rename = "_embedded")]
     embedded: Embedded,
 }
@@ -144,7 +144,7 @@ mod tests {
             r#"{"public_url":"https://disk.yandex.ru/d/token","_embedded":{"total":1,"items":[{"type":"file","path":"disk:/article.pdf","name":"article.pdf","size":12,"modified":"2026-11-01T00:00:00Z","md5":"abc","resource_id":"id-1","file":"https://storage.yandex.net/file"}]},"new_field":true}"#,
         ).unwrap();
         assert_eq!(
-            page.public_url.as_deref(),
+            page._public_url.as_deref(),
             Some("https://disk.yandex.ru/d/token")
         );
         assert_eq!(page.embedded.total, 1);

@@ -145,10 +145,10 @@ fn item_date(item: &Item) -> DateTime<Utc> {
         if let Ok(date) = DateTime::parse_from_rfc3339(modified) {
             return date.with_timezone(&Utc);
         }
-        if let Ok(seconds) = modified.parse::<i64>() {
-            if let Some(date) = Utc.timestamp_opt(seconds, 0).single() {
-                return date;
-            }
+        if let Ok(seconds) = modified.parse::<i64>()
+            && let Some(date) = Utc.timestamp_opt(seconds, 0).single()
+        {
+            return date;
         }
     }
     NaiveDateTime::parse_from_str(&item.discovered_at, "%Y-%m-%d %H:%M:%S")

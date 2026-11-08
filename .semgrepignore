@@ -1,0 +1,7 @@
+target/
+.ruff_cache/
+web/node_modules/
+web/dist/
+fuzz/corpus/
+fuzz/artifacts/
+tmp/

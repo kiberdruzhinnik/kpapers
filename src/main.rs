@@ -29,7 +29,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://kpapers.db?mode=rwc".to_owned());
     let pool = db::connect_and_migrate(&database_url).await?;
-    let _repositories = repositories::Repositories::new(pool.clone());
     tokio::spawn(scheduler::run(pool.clone()));
     let auth = auth::AuthConfig::from_env()?;
 
@@ -169,7 +168,6 @@ mod db;
 mod feed_api;
 mod pdf_processing;
 mod providers;
-mod repositories;
 mod rss;
 mod scheduler;
 #[cfg(test)]

@@ -92,7 +92,9 @@ function installFeedApi(initial: TestFeed[] = []) {
       else if (action === "refresh" && method === "POST") return json({ job_id: "job-1", status: "queued" }, 202)
       else if (!action && method === "PUT") {
         const payload = JSON.parse(String(init?.body)) as Pick<TestFeed, "display_name" | "description" | "refresh_interval_seconds">
-        Object.assign(target, payload)
+        target.display_name = payload.display_name
+        target.description = payload.description
+        target.refresh_interval_seconds = payload.refresh_interval_seconds
         return json(target)
       } else return json(null, 404)
       return json(null, 204)

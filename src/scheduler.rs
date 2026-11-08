@@ -104,14 +104,14 @@ async fn process_one(pool: &SqlitePool) -> Result<bool, Box<dyn std::error::Erro
     for month_id in month_ids {
         let now = Utc::now().to_rfc3339();
         let month_result = async {
-            feed_api::discover_month(Path(month_id.clone()), State(pool.clone()))
+            let _ = feed_api::discover_month(Path(month_id.clone()), State(pool.clone()))
                 .await
                 .map_err(|_| "provider listing failed".to_owned())?;
             let docs = feed_api::list_documents(Path(month_id.clone()), State(pool.clone()))
                 .await
                 .map_err(|_| "could not load discovered files".to_owned())?;
             for document in docs.0 {
-                feed_api::extract_document(
+                let _ = feed_api::extract_document(
                     Path(document.id),
                     State(pool.clone()),
                     Query(feed_api::ForceQuery {
@@ -300,7 +300,8 @@ mod tests {
             StatusCode::ACCEPTED
         );
 
-        let jobs: Vec<(String, String, Option<i64>, Option<String>, i64)> = sqlx::query_as(
+        type JobRow = (String, String, Option<i64>, Option<String>, i64);
+        let jobs: Vec<JobRow> = sqlx::query_as(
             "SELECT scope, feed_id, year, month_id, force FROM refresh_jobs ORDER BY scope",
         )
         .fetch_all(&pool)

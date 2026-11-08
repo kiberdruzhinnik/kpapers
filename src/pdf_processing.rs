@@ -133,10 +133,10 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             trim_run_edges(&mut line.runs);
         }
         lines.retain(|line| !line.text().trim().is_empty());
-        if let Some(first) = lines.iter().position(|line| !line.text().trim().is_empty()) {
-            if lines[first].text().trim() == (page_index + 1).to_string() {
-                lines.remove(first);
-            }
+        if let Some(first) = lines.iter().position(|line| !line.text().trim().is_empty())
+            && lines[first].text().trim() == (page_index + 1).to_string()
+        {
+            lines.remove(first);
         }
         pages.push(lines);
     }
@@ -295,17 +295,17 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
 fn strip_html_tags(text: &str) -> String {
     let mut inside_tag = false;
     text.chars()
-        .filter_map(|ch| match ch {
+        .filter(|ch| match *ch {
             '<' => {
                 inside_tag = true;
-                None
+                false
             }
             '>' => {
                 inside_tag = false;
-                None
+                false
             }
-            _ if inside_tag => None,
-            _ => Some(ch),
+            _ if inside_tag => false,
+            _ => true,
         })
         .collect::<String>()
         .trim()
@@ -391,14 +391,14 @@ fn parse_markdown_bold(runs: &mut Vec<StyledRun>) {
             characters.get(at).is_some_and(|(ch, _, _)| *ch == '*')
                 && characters.get(at + 1).is_some_and(|(ch, _, _)| *ch == '*')
         };
-        if is_marker(index) {
-            if let Some(end) = (index + 2..characters.len()).find(|at| is_marker(*at)) {
-                for (ch, _, italic) in &characters[index + 2..end] {
-                    push_styled_char(&mut parsed, *ch, true, *italic);
-                }
-                index = end + 2;
-                continue;
+        if is_marker(index)
+            && let Some(end) = (index + 2..characters.len()).find(|at| is_marker(*at))
+        {
+            for (ch, _, italic) in &characters[index + 2..end] {
+                push_styled_char(&mut parsed, *ch, true, *italic);
             }
+            index = end + 2;
+            continue;
         }
         let (ch, bold, italic) = characters[index];
         push_styled_char(&mut parsed, ch, bold, italic);
@@ -412,14 +412,12 @@ fn strip_page_label(page: &str, page_number: usize) -> String {
     let expected = page_number.to_string();
     let mut first_nonempty_seen = false;
     page.lines()
-        .filter_map(|line| {
+        .filter(|line| {
             if !first_nonempty_seen && !line.trim().is_empty() {
                 first_nonempty_seen = true;
-                if line.trim() == expected {
-                    return None;
-                }
+                return line.trim() != expected;
             }
-            Some(line)
+            true
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -466,8 +464,7 @@ fn is_xml_10_char(ch: char) -> bool {
 
 pub fn normalize_text(input: &str) -> String {
     let clean = input
-        .replace('\0', "")
-        .replace('\u{fffd}', "")
+        .replace(['\0', '\u{fffd}'], "")
         .replace("\r\n", "\n")
         .replace('\r', "\n");
     let mut paragraphs = Vec::new();
@@ -1019,7 +1016,7 @@ mod tests {
 
     #[test]
     fn generated_text_keeps_normalization_and_safe_html_invariants() {
-        let mut rng = StdRng::seed_from_u64(0x4b50_4150_4552_53);
+        let mut rng = StdRng::seed_from_u64(0x004b_5041_5045_5253);
         for _ in 0..512 {
             let mut bytes = vec![0; rng.gen_range(0..512)];
             rng.fill_bytes(&mut bytes);

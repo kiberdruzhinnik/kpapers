@@ -17,6 +17,7 @@ else
   die 'Docker is unavailable. Grant access to the Docker socket or run this script where Docker is accessible.'
 fi
 "${DOCKER[@]}" compose version >/dev/null 2>&1 || die 'Docker Compose plugin is required.'
+compose() { "${DOCKER[@]}" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
 
 if [[ -L "$ENV_FILE" ]]; then die "$ENV_FILE must not be a symlink."; fi
 umask 077
@@ -43,7 +44,6 @@ OLDER_MONTH_REFRESH_SECONDS=86400
 QUICKSTART_OPERATOR_PASSWORD=$operator_password
 EOF
   chmod 600 "$ENV_FILE"
-  compose() { "${DOCKER[@]}" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
   compose build api
   password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
   [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
@@ -63,7 +63,6 @@ EOF
   trap - EXIT
 fi
 
-compose() { "${DOCKER[@]}" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
 compose up --build -d
 printf '\nQuickstart is ready at http://localhost:18081\n'
 printf 'Operator username: operator\nOperator password: %s\n' "$operator_password"
