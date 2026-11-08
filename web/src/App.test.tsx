@@ -260,8 +260,16 @@ describe("operator session and dashboard shell", () => {
     installApi(true)
     window.history.replaceState({}, "", path)
     render(<App />)
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Feed" })).toHaveValue("feed-1"))
-    expect(await screen.findByText("Ada Lovelace · 2026 · November")).toBeInTheDocument()
+    // Partial URLs are completed in stages, remounting review at each route.
+    // Query the current DOM inside waitFor instead of retaining a removed badge.
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1")
+      expect(screen.getByRole("combobox", { name: "Feed" })).toHaveValue("feed-1")
+      expect(screen.getByRole("combobox", { name: "Year" })).toHaveValue("2026")
+      expect(screen.getByRole("combobox", { name: "Month" })).toHaveValue("month-1")
+      expect(screen.getByText("Ada Lovelace · 2026 · November")).toBeInTheDocument()
+      expect(screen.getByText("No PDFs found")).toBeInTheDocument()
+    })
   })
 
   it("recovers from a missing feed and an unknown dashboard path", async () => {
