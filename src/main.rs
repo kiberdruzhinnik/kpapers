@@ -51,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/management/months/{month_id}/refresh", post(feed_api::force_month_refresh))
         .route("/api/management/documents/{document_id}/promotion", put(feed_api::set_promotion_override))
         .route("/api/management/documents/{document_id}/extract", post(feed_api::extract_document))
+        .route("/api/management/documents/{document_id}/source", get(rss::review_download))
         .route_layer(middleware::from_fn(auth::require_session));
     let app = Router::new()
         .route("/healthz", get(health))

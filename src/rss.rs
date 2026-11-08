@@ -33,13 +33,24 @@ pub async fn render(Path(feed_id): Path<String>, State(pool): State<SqlitePool>)
 }
 
 pub async fn download(Path(document_id): Path<String>, State(pool): State<SqlitePool>) -> Response {
-    let row = match sqlx::query_as::<_, (String, String, String)>(
-        "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE sd.id=? AND f.active=1 AND fy.active=1 AND fm.active=1 AND sd.extraction_status='success' AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish'",
-    )
-    .bind(&document_id)
-    .fetch_optional(&pool)
-    .await
-    {
+    document_redirect(pool, document_id, true).await
+}
+
+pub async fn review_download(Path(document_id): Path<String>, State(pool): State<SqlitePool>) -> Response {
+    document_redirect(pool, document_id, false).await
+}
+
+async fn document_redirect(pool: SqlitePool, document_id: String, public_only: bool) -> Response {
+    let row = if public_only {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE sd.id=? AND f.active=1 AND fy.active=1 AND fm.active=1 AND sd.extraction_status='success' AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish'",
+        ).bind(&document_id).fetch_optional(&pool).await
+    } else {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id WHERE sd.id=?",
+        ).bind(&document_id).fetch_optional(&pool).await
+    };
+    let row = match row {
         Ok(Some(row)) => row,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
