@@ -761,7 +761,9 @@ mod tests {
         sqlx::query("INSERT INTO feed_years (feed_id, year) VALUES ('active-feed', 2026), ('active-feed', 2025), ('archived-feed', 2026)")
             .execute(&pool).await.unwrap();
         sqlx::query("UPDATE feed_years SET active=0 WHERE feed_id='active-feed' AND year=2025")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO feed_months (id, feed_id, year, month, provider, source_url) VALUES \
             ('active-month', 'active-feed', 2026, 1, 'yandex_disk', 'https://disk.yandex.ru/d/active'), \
             ('archived-month', 'active-feed', 2026, 2, 'yandex_disk', 'https://disk.yandex.ru/d/archived'), \
@@ -769,15 +771,21 @@ mod tests {
             ('inactive-feed-month', 'archived-feed', 2026, 4, 'yandex_disk', 'https://disk.yandex.ru/d/feed')")
             .execute(&pool).await.unwrap();
         sqlx::query("UPDATE feed_months SET active=0 WHERE id='archived-month'")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes, extraction_status) VALUES \
             ('pending-doc', 'active-month', '/pending.pdf', 'pending.pdf', 'https://example.test/pending.pdf', 'pending', 10, 'pending'), \
             ('failed-doc', 'active-month', '/failed.pdf', 'failed.pdf', 'https://example.test/failed.pdf', 'failed', 10, 'failure'), \
             ('success-doc', 'active-month', '/success.pdf', 'success.pdf', 'https://example.test/success.pdf', 'success', 10, 'success'), \
             ('archived-doc', 'archived-month', '/archived.pdf', 'archived.pdf', 'https://example.test/archived.pdf', 'archived', 10, 'failure')")
             .execute(&pool).await.unwrap();
-        sqlx::query("UPDATE source_documents SET promotional_override='include' WHERE id='failed-doc'")
-            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "UPDATE source_documents SET promotional_override='include' WHERE id='failed-doc'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let Json(summary) = overview_summary(State(pool.clone())).await.unwrap();
         assert_eq!(summary.source_folder_count, 1);

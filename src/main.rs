@@ -287,10 +287,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response_body(response).await, serde_json::json!({
-            "source_folder_count": 0,
-            "needs_review_count": 0,
-        }));
+        assert_eq!(
+            response_body(response).await,
+            serde_json::json!({
+                "source_folder_count": 0,
+                "needs_review_count": 0,
+            })
+        );
 
         let response = app
             .clone()
