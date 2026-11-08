@@ -29,8 +29,9 @@ chmod 600 "$ENV_FILE"
 
 compose() { "${DOCKER[@]}" compose "${compose_files[@]}" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
 cleanup() {
+  result=$?
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-  if [[ "${UI_E2E_KEEP_IMAGES:-false}" != true ]]; then
+  if [[ "${E2E_KEEP_IMAGES:-false}" != true || $result -ne 0 ]]; then
     compose down --rmi local >/dev/null 2>&1 || true
   fi
   rm -f -- "$ENV_FILE"
@@ -40,7 +41,11 @@ trap cleanup EXIT INT TERM
 FIXTURE_ROOT="$fixture_dir" python3 "$ROOT/tests/e2e/generate_fixtures.py"
 chmod -R a+rX "$fixture_dir"
 
-compose build api web ui-e2e
+if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
+  compose build ui-e2e
+else
+  compose build api web ui-e2e
+fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
 HASH_VALUE="$password_hash" python3 - "$ENV_FILE" <<'PY'

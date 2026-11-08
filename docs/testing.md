@@ -29,16 +29,22 @@ This map ties production behavior and trust boundaries to their current tests an
 
 ## Cross-layer checks
 
-- `web/tests/browser/*`: responsive layout, accessibility, sign-in, navigation, and operator workflows.
-- `tests/e2e/test_miniflux.py`: feed publication, PDF extraction, safe RSS content, exact document links, cache identity, and reader ingestion.
-- `.github/workflows/ui-tests.yml`: frontend, browser, Miniflux, and production web-image checks.
-- `.github/workflows/rust-tests.yml`: Rust formatting and deterministic tests on pull requests and pushes to `main`.
-- `.github/workflows/fuzz-smoke.yml` and `fuzz-long.yml`: bounded PR fuzzing plus scheduled/manual longer campaigns with retained run data.
-- Fuzz coverage: request JSON and URL validation, provider JSON parsing, filename/date parsing, extracted-text transformation, and PDF bytes. Smoke runs are time-bounded; retain minimized failures as regression tests or corpus inputs.
+`web/tests/browser/*` covers responsive layout, accessibility, sign-in, navigation, and operator workflows. `tests/e2e/test_miniflux.py` covers feed publication, PDF extraction, safe RSS content, exact document links, cache identity, and reader ingestion. `scripts/integration-e2e.sh` runs these suites in isolated Compose projects while reusing the same production API and web images.
 
-## Expected verification commands
+### Validation map
 
-- Rust: `cargo fmt --all -- --check`, `cargo fmt --manifest-path fuzz/Cargo.toml -- --check`, `cargo test --all-targets`.
-- Web: `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` from `web/`.
-- Browser and contract: `npm run test:e2e` from `web/`, `bash scripts/ui-e2e.sh`, and `bash scripts/e2e.sh`.
-- Fuzz: run `PDFIUM_LIB_DIR=/path/to/pdfium/lib FUZZ_SMOKE_SECONDS=30 ./scripts/fuzz-smoke.sh`; longer campaigns run separately from pull-request checks.
+| Suite | Canonical local command | Prerequisites | GitHub Actions owner and trigger | Coverage / notes |
+| --- | --- | --- | --- | --- |
+| Frontend lint, component tests, TypeScript, production build | `cd web && npm ci && npm run check` | Node.js 22 and npm | `ui-tests.yml`, pull requests to `main`; runs once in the production web image build | `npm run check` runs lint, Vitest, and `npm run build`; build performs TypeScript checking once. Use `npm run typecheck` for a targeted local check. |
+| Rust formatting, Clippy, and tests | `./scripts/check-rust.sh` | Stable Rust with `rustfmt` and `clippy` components | `rust-tests.yml`, pull requests to `main` | Checks the app and fuzz crate formatting and Clippy targets, then runs Rust tests once. |
+| Browser and RSS integration | `./scripts/integration-e2e.sh` | Docker Compose, Python 3, and network access to pull test images | `ui-tests.yml`, pull requests to `main` | Runs Playwright and Miniflux contract suites in separate isolated projects; shares production API/web images. |
+| Production image vulnerability scan | Run `E2E_KEEP_IMAGES=true ./scripts/integration-e2e.sh`, then run `trivy image --scanners vuln,secret kpapers-api:e2e` and `trivy image --scanners vuln,secret kpapers-web:e2e` | Docker and Trivy 0.76.2 | `ui-tests.yml`, pull requests to `main`; `publish-containers.yml`, pushes to `main` and version tags | Pull request scans reuse the production images used by integration tests. Push scans gate publishing. Findings are reported without failing the job. |
+| Shell and Python lint; Semgrep and filesystem Trivy scans | `shellcheck ./scripts/*.sh`; `ruff check tests/e2e`; `semgrep scan --config auto --json --output semgrep-results.json src web/src scripts tests/e2e`; filesystem Trivy action configured in `code-quality.yml` | ShellCheck, Ruff 0.15.10, Semgrep 1.183.0, and Trivy 0.76.2 | `code-quality.yml`, pull requests to `main` | Independent checks for maintained shell/Python tooling, application source, dependencies, configuration, and secrets. Semgrep and filesystem Trivy findings are report-only. |
+| Fuzz smoke | `PDFIUM_LIB_DIR=/path/to/pdfium/lib FUZZ_SMOKE_SECONDS=15 ./scripts/fuzz-smoke.sh` | Nightly Rust with `llvm-tools-preview`, cargo-fuzz, and the pinned Pdfium runtime | `fuzz-smoke.yml`, pull requests to `main` | Fuzzes parser and PDF targets for 15 seconds each; uploads crash data on failure. |
+| Extended fuzzing | `PDFIUM_LIB_DIR=/path/to/pdfium/lib FUZZ_SMOKE_SECONDS=1800 FUZZ_PRESERVE_OUTPUTS=true ./scripts/fuzz-smoke.sh` | Nightly Rust with `llvm-tools-preview`, cargo-fuzz, and the pinned Pdfium runtime | `fuzz-smoke.yml`, weekly schedule and manual dispatch | Uses the same pinned Pdfium build and fuzz runner as PR smoke, with longer duration and retained corpus/crash data. Manual runs can set duration. |
+
+The PR test workflows are intentionally scoped by runtime and check type. Do not add a second invocation of `npm run typecheck` to the frontend CI sequence: `npm run build` already runs `tsc -b`. Fuzz smoke and extended fuzzing share one workflow and runner, with distinct triggers, duration, and artifact retention. Production image scans run against the same API/web builds as the integration tests on pull requests.
+
+## Local verification
+
+Run `cd web && npm ci && npm run check`, `./scripts/check-rust.sh`, and `./scripts/integration-e2e.sh` for the main product checks. Run `shellcheck`, `ruff`, Semgrep, filesystem Trivy, and fuzzing separately when their tools or pinned runtime are available. `./scripts/ui-e2e.sh` and `bash ./scripts/e2e.sh` remain useful for isolating one integration suite; the canonical combined command is `./scripts/integration-e2e.sh`.

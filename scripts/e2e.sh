@@ -29,7 +29,12 @@ chmod 600 "$ENV_FILE"
 
 compose() { "${DOCKER[@]}" compose "${compose_files[@]}" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
 cleanup() {
-  compose down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+  result=$?
+  if [[ "${E2E_KEEP_IMAGES:-false}" == true && $result -eq 0 ]]; then
+    compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  else
+    compose down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+  fi
   rm -f -- "$ENV_FILE"
   rm -rf -- "$fixture_dir"
 }
@@ -45,7 +50,11 @@ if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
   printf 'REFERENCE_DOCUMENT_FILENAME=%s\n' "$reference_filename" >> "$ENV_FILE"
 fi
 chmod -R a+rX "$fixture_dir"
-compose build api web
+if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
+  "${DOCKER[@]}" image inspect kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || die 'Shared E2E images are missing; run the integration orchestrator without E2E_SKIP_APP_BUILD.'
+else
+  compose build api web
+fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
 HASH_VALUE="$password_hash" python3 - "$ENV_FILE" <<'PY'

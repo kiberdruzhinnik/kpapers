@@ -184,12 +184,12 @@ describe("operator session and dashboard shell", () => {
     await screen.findByRole("combobox", { name: "Month" })
     await user.selectOptions(screen.getByRole("combobox", { name: "Feed" }), "feed-2")
 
-    await waitFor(() => expect(window.location.pathname).toBe("/pdf-review/feed-2/2025/month-2"))
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Feed" })).toHaveValue("feed-2")
       expect(screen.getByRole("combobox", { name: "Year" })).toHaveValue("2025")
       expect(screen.getByRole("combobox", { name: "Month" })).toHaveValue("month-2")
     })
+    await waitFor(() => expect(window.location.pathname).toBe("/pdf-review/feed-2/2025/month-2"))
   })
 
   it("persists the collapsible desktop sidebar state across reloads", async () => {

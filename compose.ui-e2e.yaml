@@ -1,5 +1,6 @@
 services:
   api:
+    image: kpapers-api:e2e
     environment:
       E2E_FIXTURE_MODE: "true"
       E2E_FIXTURE_DIR: /fixtures
@@ -9,6 +10,7 @@ services:
       - ${E2E_FIXTURE_HOST_DIR:?Set E2E_FIXTURE_HOST_DIR}/current-month:/fixtures/current-month:ro
 
   web:
+    image: kpapers-web:e2e
     ports: []
 
   ui-e2e:
