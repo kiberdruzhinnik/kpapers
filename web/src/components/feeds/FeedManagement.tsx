@@ -217,7 +217,8 @@ function copyTextWithDocument(value: string) {
   }
 }
 
-export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFeedId, onSelectFeed }: {
+export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFeedId, onSelectFeed, onCreate }: {
+  onCreate: () => void
   feeds: Feed[]
   onFeedsChange: (feeds: Feed[]) => void
   onReviewMonth: (month: Month) => void
@@ -247,17 +248,6 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
     else if (selectedId && !loaded.some((feed) => feed.id === selectedId && feed.active)) selectFeed(loaded.find((feed) => feed.active)?.id ?? null)
   }
 
-  async function create(values: { display_name: string; description: string; refresh_interval_seconds: number | null }) {
-    try {
-      const feed = await api.createFeed(values)
-      await reloadFeeds(feed.id)
-      toast.success("Feed created", { description: `${feed.display_name} is ready for source folders.` })
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not create feed.")
-      throw error
-    }
-  }
-
   async function confirm() {
     if (!confirmAction) return
     const { kind, feed } = confirmAction
@@ -280,6 +270,7 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div><p className="mb-2 text-sm text-muted-foreground">Publishing workspace</p><h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">Feeds</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">Create author channels, organize source folders, and keep public RSS addresses stable.</p></div>
+        <Button onClick={onCreate}><Plus aria-hidden="true" />Create feed</Button>
         <Badge className="h-7 rounded-full px-3" variant="secondary">{activeFeeds.length} active · {archivedFeeds.length} archived</Badge>
       </div>
       <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
@@ -298,10 +289,7 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
               </div>}
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-4"><div className="flex items-center gap-2"><div className="flex size-8 items-center justify-center rounded-lg bg-primary/8 text-primary"><Plus aria-hidden="true" className="size-4" /></div><CardTitle className="text-base">Create a feed</CardTitle></div><CardDescription>Add the author-facing details for a new channel.</CardDescription></CardHeader>
-            <CardContent><FeedForm onSubmit={create} submitLabel="Create feed" /></CardContent>
-          </Card>
+
         </aside>
         <section aria-label="Feed details" className="min-w-0">
           {selectedFeed
@@ -328,6 +316,22 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+
+export function CreateFeed({ onCreated, onCancel }: { onCreated: (feed: Feed) => void; onCancel: () => void }) {
+  async function create(values: { display_name: string; description: string; refresh_interval_seconds: number | null }) {
+    const feed = await api.createFeed(values)
+    onCreated(feed)
+    toast.success("Feed created", { description: `${feed.display_name} is ready for source folders.` })
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-xl space-y-6">
+      <div><h1 className="text-2xl font-semibold tracking-tight">Create a feed</h1><p className="mt-2 text-sm text-muted-foreground">Add the author-facing details for a new channel.</p></div>
+      <Card><CardContent className="pt-6"><FeedForm onCancel={onCancel} onSubmit={create} submitLabel="Create feed" /></CardContent></Card>
     </div>
   )
 }

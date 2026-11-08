@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import App from "@/App"
 
 type TestFeed = {
@@ -119,6 +119,7 @@ async function openFeeds(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("feed management workflows", () => {
+  beforeEach(() => localStorage.clear())
   it("copies the RSS address with the Clipboard API when available", async () => {
     installFeedApi([feed])
     const writeText = vi.fn().mockResolvedValue(undefined)
@@ -192,6 +193,7 @@ describe("feed management workflows", () => {
     const user = userEvent.setup()
     render(<App />)
     await openFeeds(user)
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
 
     await user.type(screen.getByLabelText("Author name"), "  Grace Hopper  ")
     await user.type(screen.getByLabelText(/Description/), "  Compiler notes  ")
@@ -212,6 +214,7 @@ describe("feed management workflows", () => {
     const user = userEvent.setup()
     render(<App />)
     await openFeeds(user)
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
 
     await user.type(screen.getByLabelText("Author name"), "Octavia Butler")
     await user.type(screen.getByLabelText(/Refresh interval/), "0")
@@ -225,6 +228,7 @@ describe("feed management workflows", () => {
     const user = userEvent.setup()
     render(<App />)
     await openFeeds(user)
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
 
     const interval = screen.getByLabelText(/Refresh interval/) as HTMLInputElement
     await user.type(screen.getByLabelText("Author name"), "Katherine Johnson")
@@ -280,6 +284,7 @@ describe("feed management workflows", () => {
     await user.type(screen.getByLabelText("Add a year"), "2026")
     await user.click(screen.getByRole("button", { name: "Add year" }))
     await screen.findByText("2026", { selector: "*[data-slot='card-title']" })
+    await user.click(screen.getByRole("button", { name: "Expand 2026" }))
     await user.selectOptions(screen.getByLabelText("Month"), "1")
     await user.type(screen.getByLabelText("Public folder link"), "https://disk.yandex.ru/example")
     await user.click(screen.getByRole("button", { name: "Link month" }))
@@ -303,9 +308,42 @@ describe("feed management workflows", () => {
     await user.type(screen.getByLabelText("Add a year"), "2025")
     await user.click(screen.getByRole("button", { name: "Add year" }))
     await screen.findByText("2025", { selector: "*[data-slot='card-title']" })
+    await user.click(screen.getByRole("button", { name: "Expand 2025" }))
     await user.selectOptions(screen.getByLabelText("Month"), "2")
     await user.type(screen.getByLabelText("Public folder link"), "https://invalid.example")
     await user.click(screen.getByRole("button", { name: "Link month" }))
     expect(await screen.findByRole("alert")).toHaveTextContent("Please check the information and try again.")
   })
+
+  it("keeps entered values after an API error and retries creation without a follow-up list request", async () => {
+    const fetchMock = installFeedApi()
+    const original = fetchMock.getMockImplementation()!
+    let posts = 0
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === "/api/management/feeds" && init?.method === "POST") {
+        posts += 1
+        if (posts === 1) return json(null, 500)
+      }
+      // A subsequent list read is unavailable; successful creation must still open its details.
+      if (posts > 1 && String(input) === "/api/management/feeds" && !init?.method) return json(null, 503)
+      return original(input, init)
+    })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole("button", { name: "Create feed" }))
+    await user.type(screen.getByLabelText("Author name"), "Retry author")
+    await user.type(screen.getByLabelText(/Description/), "Keep these notes")
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
+    expect(await screen.findByRole("alert")).toBeInTheDocument()
+    expect(screen.getByLabelText("Author name")).toHaveValue("Retry author")
+    expect(screen.getByLabelText(/Description/)).toHaveValue("Keep these notes")
+    expect(window.location.pathname).toBe("/manage/feeds/new")
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
+    await screen.findByRole("heading", { name: "Retry author" })
+    expect(window.location.pathname).toBe("/manage/feeds/feed-new")
+    expect(posts).toBe(2)
+    expect(screen.queryByText("That feed is no longer available.")).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path, init]) => String(path) === "/api/management/feeds" && !init?.method)).toHaveLength(1)
+  })
+
 })

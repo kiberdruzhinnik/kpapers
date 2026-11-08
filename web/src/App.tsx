@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Toaster } from "@/components/ui/sonner"
-import { FeedManagement } from "@/components/feeds/FeedManagement"
+import { CreateFeed, FeedManagement } from "@/components/feeds/FeedManagement"
 import { PdfReview } from "@/components/documents/PdfReview"
 import { toast } from "sonner"
 
@@ -37,19 +37,20 @@ function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 type ReviewSelection = { feedId: string; year?: number; monthId?: string }
-type DashboardRoute = { section: Section; feedId?: string; reviewSelection?: ReviewSelection } | null
+type DashboardRoute = { creating?: boolean; section: Section; feedId?: string; reviewSelection?: ReviewSelection } | null
 
 function routeFromPath(pathname: string): DashboardRoute {
-  if (pathname === "/") return { section: "Overview" }
-  if (pathname === "/feeds") return { section: "Feeds" }
-  if (pathname === "/pdf-review") return { section: "PDF review" }
+  if (["/", "/manage", "/manage/"].includes(pathname)) return { section: "Overview" }
+  if (pathname === "/manage/feeds/new") return { section: "Feeds", creating: true }
+  if (pathname === "/manage/feeds") return { section: "Feeds" }
+  if (pathname === "/manage/pdf-review") return { section: "PDF review" }
 
-  const feedMatch = pathname.match(/^\/feeds\/([^/]+)$/)
+  const feedMatch = pathname.match(/^\/manage\/feeds\/([^/]+)$/)
   if (feedMatch) {
     try { return { section: "Feeds", feedId: decodeURIComponent(feedMatch[1]) } } catch { return null }
   }
 
-  const reviewMatch = pathname.match(/^\/pdf-review\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?$/)
+  const reviewMatch = pathname.match(/^\/manage\/pdf-review\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?$/)
   if (reviewMatch) {
     const year = reviewMatch[2] === undefined ? undefined : Number(reviewMatch[2])
     if (year !== undefined && (!Number.isInteger(year) || year < 1 || year > 9999)) return null
@@ -69,7 +70,11 @@ function routeFromPath(pathname: string): DashboardRoute {
 }
 
 function sectionPath(section: Section) {
-  return section === "Overview" ? "/" : section === "Feeds" ? "/feeds" : "/pdf-review"
+  return section === "Overview" ? "/manage/" : section === "Feeds" ? "/manage/feeds" : "/manage/pdf-review"
+}
+
+function feedPath(feedId?: string | null) {
+  return feedId ? `/manage/feeds/${encodeURIComponent(feedId)}` : sectionPath("Feeds")
 }
 
 function storedSidebarState() {
@@ -77,7 +82,7 @@ function storedSidebarState() {
 }
 
 function reviewPath(selection: ReviewSelection) {
-  const feedPath = `/pdf-review/${encodeURIComponent(selection.feedId)}`
+  const feedPath = `/manage/pdf-review/${encodeURIComponent(selection.feedId)}`
   if (selection.year === undefined) return feedPath
   if (selection.monthId === undefined) return `${feedPath}/${selection.year}`
   return `${feedPath}/${selection.year}/${encodeURIComponent(selection.monthId)}`
@@ -178,7 +183,7 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
       <div className="flex min-h-svh">
         <aside className={`hidden shrink-0 flex-col border-r bg-background py-5 transition-[width] md:flex ${sidebarCollapsed ? "w-[72px] px-2" : "w-[248px] px-4"}`}>
           <div className={`flex items-start pb-8 ${sidebarCollapsed ? "flex-col items-center gap-3" : "justify-between gap-2 px-2"}`}>
-            <Link aria-label="Kpapers overview" to="/"><Brand compact={sidebarCollapsed} /></Link>
+            <Link aria-label="Kpapers overview" to="/manage/"><Brand compact={sidebarCollapsed} /></Link>
             <Button aria-expanded={!sidebarCollapsed} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} size="icon" title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} variant="ghost">
               {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
             </Button>
@@ -203,7 +208,7 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
                   <Button aria-label="Open navigation" className="md:hidden" size="icon" variant="ghost"><Menu aria-hidden="true" /></Button>
                 </SheetTrigger>
                 <SheetContent className="w-[280px] max-w-[85vw] p-4" side="left">
-                  <SheetHeader className="px-2 pb-5"><SheetTitle><Link aria-label="Kpapers overview" to="/" onClick={() => setMenuOpen(false)}><Brand /></Link></SheetTitle></SheetHeader>
+                  <SheetHeader className="px-2 pb-5"><SheetTitle><Link aria-label="Kpapers overview" to="/manage/" onClick={() => setMenuOpen(false)}><Brand /></Link></SheetTitle></SheetHeader>
                   <Navigation section={section} onNavigate={onSectionChange} onSelect={() => setMenuOpen(false)} />
                 </SheetContent>
               </Sheet>
@@ -229,9 +234,10 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
   )
 }
 
-function Overview({ feedCount, onNavigate, summary, summaryLoading, summaryError }: {
+function Overview({ feedCount, onNavigate, onCreate, summary, summaryLoading, summaryError }: {
   feedCount: number
   onNavigate: (section: Section) => void
+  onCreate: () => void
   summary: OverviewSummary | null
   summaryLoading: boolean
   summaryError: string | null
@@ -242,7 +248,7 @@ function Overview({ feedCount, onNavigate, summary, summaryLoading, summaryError
     <div className="space-y-7">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div><p className="mb-2 text-sm text-muted-foreground">Your publishing workspace</p><h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">Overview</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">Manage author feeds, keep source folders organized, and review documents before they reach readers.</p></div>
-        <Button onClick={() => onNavigate("Feeds")}><Plus aria-hidden="true" /> Create feed</Button>
+        <Button onClick={onCreate}><Plus aria-hidden="true" /> Create feed</Button>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -304,7 +310,7 @@ function AppContent() {
   const reviewSelection = route?.reviewSelection ?? null
   const requestedFeedId = route?.feedId ?? reviewSelection?.feedId
   const updateReviewSelection = useCallback((selection: ReviewSelection | null) => {
-    navigate(selection ? reviewPath(selection) : "/pdf-review")
+    navigate(selection ? reviewPath(selection) : "/manage/pdf-review")
   }, [navigate])
 
   const restoreSession = useCallback(async () => {
@@ -328,9 +334,13 @@ function AppContent() {
   }, [])
 
   useEffect(() => {
+    if (location.pathname === "/" || location.pathname === "/manage") navigate("/manage/", { replace: true })
+  }, [location.pathname, navigate])
+
+  useEffect(() => {
     if (!route) {
       toast.error("That dashboard page could not be found.")
-      navigate("/", { replace: true })
+      navigate("/manage/", { replace: true })
     }
   }, [navigate, route])
 
@@ -338,7 +348,7 @@ function AppContent() {
     if (session !== "signed-in" || !requestedFeedId) return
     if (feeds.some((feed) => feed.id === requestedFeedId)) return
     toast.error("That feed is no longer available.")
-    navigate(section === "PDF review" ? "/pdf-review" : "/feeds", { replace: true })
+    navigate(section === "PDF review" ? "/manage/pdf-review" : "/manage/feeds", { replace: true })
   }, [feeds, navigate, requestedFeedId, section, session])
 
   useEffect(() => {
@@ -399,7 +409,7 @@ function AppContent() {
       await api.logout()
       setFeeds([])
       setSession("signed-out")
-      navigate("/", { replace: true })
+      navigate("/manage/", { replace: true })
       toast.success("Signed out")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not sign out. Please try again.")
@@ -417,10 +427,12 @@ function AppContent() {
         ? <SignInPanel error={authError} onSubmit={signIn} pending={loginPending} />
         : <DashboardShell feedCount={feeds.filter((feed) => feed.active).length} onLogout={() => void signOut()} onSectionChange={(nextSection) => navigate(sectionPath(nextSection))} section={section}>
           {section === "Overview"
-            ? <Overview feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
+            ? <Overview onCreate={() => navigate("/manage/feeds/new")} feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
             : section === "Feeds"
-              ? <FeedManagement feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(`/pdf-review/${encodeURIComponent(month.feed_id)}/${month.year}/${encodeURIComponent(month.id)}`)} onSelectFeed={(feedId) => navigate(feedId ? `/feeds/${encodeURIComponent(feedId)}` : "/feeds")} selectedFeedId={route.feedId ?? null} />
-              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(reviewSelection?.feedId ? `/feeds/${encodeURIComponent(reviewSelection.feedId)}` : "/feeds")} onInvalidSelection={() => navigate("/pdf-review", { replace: true })} onSelectionChange={updateReviewSelection} />}
+              ? route.creating
+                ? <CreateFeed onCancel={() => navigate("/manage/feeds")} onCreated={(feed) => { setFeeds((current) => [...current, feed]); navigate(feedPath(feed.id)) }} />
+                : <FeedManagement onCreate={() => navigate("/manage/feeds/new")} feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(reviewPath({ feedId: month.feed_id, year: month.year, monthId: month.id }))} onSelectFeed={(feedId) => navigate(feedPath(feedId))} selectedFeedId={route.feedId ?? null} />
+              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(feedPath(reviewSelection?.feedId))} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onSelectionChange={updateReviewSelection} />}
         </DashboardShell>}
     </>
   )

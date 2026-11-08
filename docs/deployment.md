@@ -40,7 +40,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Both services have container health checks. Compose waits for the API health check before starting the web service. The app is available on `http://localhost:${WEB_PORT:-8080}`. Sign in with the username and password used to create the hash. Configure feeds and month links using the [operator guide](operator-guide.md).
+Both services have container health checks. Compose waits for the API health check before starting the web service. The app is available on `http://localhost:${WEB_PORT:-8080}/manage/`. Sign in with the username and password used to create the hash. Configure feeds and month links using the [operator guide](operator-guide.md).
 
 ## Local human testing
 
@@ -50,7 +50,7 @@ For a disposable local environment, run:
 ./scripts/quickstart.sh
 ```
 
-The script generates and prints a random operator password, binds the web service to all host interfaces on port `18081`, and uses its own `.env.quickstart`, Compose project, and named data volume. Open `http://localhost:18081` on the host, or use the host's IP address from another device on the network. This environment is non-production and does not share the deployment's `.env` or database. To remove the test stack and permanently delete its database, cached files, local images, and generated credentials, run:
+The script generates and prints a random operator password, binds the web service to all host interfaces on port `18081`, and uses its own `.env.quickstart`, Compose project, and named data volume. Open `http://localhost:18081/manage/` on the host, or use the host's IP address from another device on the network. This environment is non-production and does not share the deployment's `.env` or database. To remove the test stack and permanently delete its database, cached files, local images, and generated credentials, run:
 
 ```sh
 ./scripts/quickstart-down.sh
