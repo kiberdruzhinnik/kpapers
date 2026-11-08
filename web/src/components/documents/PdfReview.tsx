@@ -12,10 +12,10 @@ const classificationLabel: Record<string, string> = {
   unknown: "Not classified",
 }
 
-type ReviewSelection = { feedId: string; year: number; monthId: string }
+type ReviewSelection = { feedId: string; year?: number; monthId?: string }
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
-export function PdfReview({ feeds, initialSelection, onBack }: { feeds: Feed[]; initialSelection: ReviewSelection | null; onBack: () => void }) {
+export function PdfReview({ feeds, initialSelection, onBack, onInvalidSelection, onSelectionChange }: { feeds: Feed[]; initialSelection: ReviewSelection | null; onBack: () => void; onInvalidSelection?: () => void; onSelectionChange?: (selection: ReviewSelection | null) => void }) {
   const [feedId, setFeedId] = useState(initialSelection?.feedId ?? feeds.find((feed) => feed.active)?.id ?? feeds[0]?.id ?? "")
   const [years, setYears] = useState<Year[]>([])
   const [year, setYear] = useState<number | null>(initialSelection?.year ?? null)
@@ -35,17 +35,28 @@ export function PdfReview({ feeds, initialSelection, onBack }: { feeds: Feed[]; 
     }
     api.years(feedId).then((items) => {
       if (!mounted) return
+      if (initialSelection?.feedId === feedId && initialSelection.year !== undefined && !items.some((item) => item.year === initialSelection.year)) {
+        toast.error("The requested review year is no longer available.")
+        setYears(items)
+        setYear(null)
+        setMonthId("")
+        setHierarchyLoading(false)
+        onInvalidSelection?.()
+        return
+      }
       setYears(items)
-      setYear((current) => items.some((item) => item.year === current)
-        ? current
-        : initialSelection?.feedId === feedId && items.some((item) => item.year === initialSelection.year)
+      const nextYear = items.some((item) => item.year === year)
+        ? year
+        : initialSelection?.feedId === feedId && initialSelection.year !== undefined && items.some((item) => item.year === initialSelection.year)
           ? initialSelection.year
-          : items[0]?.year ?? null)
+          : items[0]?.year ?? null
+      setYear(nextYear)
+      if (nextYear !== null && initialSelection?.year !== nextYear) onSelectionChange?.({ feedId, year: nextYear })
     }).catch((error: unknown) => {
       if (mounted) toast.error(error instanceof Error ? error.message : "Could not load feed years.")
     }).finally(() => { if (mounted) setHierarchyLoading(false) })
     return () => { mounted = false }
-  }, [feedId, initialSelection])
+  }, [feedId, year, initialSelection, onSelectionChange])
 
   useEffect(() => {
     let mounted = true
@@ -54,17 +65,28 @@ export function PdfReview({ feeds, initialSelection, onBack }: { feeds: Feed[]; 
     }
     api.months(feedId, year).then((items) => {
       if (!mounted) return
+      if (initialSelection?.feedId === feedId && initialSelection.year === year && initialSelection.monthId !== undefined && !items.some((item) => item.id === initialSelection.monthId)) {
+        toast.error("The requested review month is no longer available.")
+        setMonths(items)
+        setMonthId("")
+        setHierarchyLoading(false)
+        onInvalidSelection?.()
+        return
+      }
       setMonths(items)
-      setMonthId((current) => items.some((item) => item.id === current)
-        ? current
-        : initialSelection?.feedId === feedId && initialSelection.year === year && items.some((item) => item.id === initialSelection.monthId)
+      const nextMonthId = items.some((item) => item.id === monthId)
+        ? monthId
+        : initialSelection?.feedId === feedId && initialSelection.year === year && initialSelection.monthId !== undefined && items.some((item) => item.id === initialSelection.monthId)
           ? initialSelection.monthId
-          : items[0]?.id ?? "")
+          : items[0]?.id ?? ""
+      setMonthId(nextMonthId)
+      setLoading(Boolean(nextMonthId))
+      if (nextMonthId && initialSelection?.monthId !== nextMonthId) onSelectionChange?.({ feedId, year, monthId: nextMonthId })
     }).catch((error: unknown) => {
       if (mounted) toast.error(error instanceof Error ? error.message : "Could not load feed months.")
     }).finally(() => { if (mounted) setHierarchyLoading(false) })
     return () => { mounted = false }
-  }, [feedId, year, initialSelection])
+  }, [feedId, year, initialSelection, onSelectionChange])
 
   useEffect(() => {
     let mounted = true
@@ -125,19 +147,19 @@ export function PdfReview({ feeds, initialSelection, onBack }: { feeds: Feed[]; 
         <CardHeader><CardTitle>Choose a source</CardTitle><CardDescription>Browse discovered documents by feed, year, and month.</CardDescription></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-3">
           <label className="space-y-1.5 text-xs font-medium">Feed
-            <select aria-label="Feed" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" onChange={(event) => { setFeedId(event.target.value); setYear(null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false) }} value={feedId}>
+            <select aria-label="Feed" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" onChange={(event) => { const nextFeedId = event.target.value; setFeedId(nextFeedId); setYear(null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextFeedId ? { feedId: nextFeedId } : null) }} value={feedId}>
               <option value="">Choose a feed</option>
               {feeds.map((feed) => <option key={feed.id} value={feed.id}>{feed.display_name}</option>)}
             </select>
           </label>
           <label className="space-y-1.5 text-xs font-medium">Year
-            <select aria-label="Year" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={!feedId || hierarchyLoading} onChange={(event) => { setYear(event.target.value ? Number(event.target.value) : null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false) }} value={year ?? ""}>
+            <select aria-label="Year" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={!feedId || hierarchyLoading} onChange={(event) => { const nextYear = event.target.value ? Number(event.target.value) : undefined; setYear(nextYear ?? null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextYear === undefined ? { feedId } : { feedId, year: nextYear }) }} value={year ?? ""}>
               <option value="">{hierarchyLoading ? "Loading years…" : "Choose a year"}</option>
               {years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>)}
             </select>
           </label>
           <label className="space-y-1.5 text-xs font-medium">Month
-            <select aria-label="Month" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={year === null || hierarchyLoading} onChange={(event) => { setMonthId(event.target.value); setDocuments([]); setLoadError(null); setLoading(Boolean(event.target.value)) }} value={monthId}>
+            <select aria-label="Month" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={year === null || hierarchyLoading} onChange={(event) => { const nextMonthId = event.target.value; setMonthId(nextMonthId); setDocuments([]); setLoadError(null); setLoading(Boolean(nextMonthId)); onSelectionChange?.(nextMonthId ? { feedId, year: year!, monthId: nextMonthId } : { feedId, year: year! }) }} value={monthId}>
               <option value="">{hierarchyLoading ? "Loading months…" : "Choose a month"}</option>
               {months.map((item) => <option key={item.id} value={item.id}>{monthNames[item.month - 1] ?? `Month ${item.month}`}</option>)}
             </select>

@@ -22,15 +22,17 @@ fi
 
 umask 077
 operator_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-fixture_dir="$(mktemp -d /tmp/kpapers-ui-e2e-fixtures.XXXXXX)"
+mkdir -p "$ROOT/.tmp"
+fixture_dir="$(mktemp -d "$ROOT/.tmp/kpapers-ui-e2e-fixtures.XXXXXX")"
 printf 'OPERATOR_PASSWORD_HASH=helper\nSESSION_SIGNING_KEY=%s\nAPI_URL=http://api:8080\nCOOKIE_SECURE=false\nWEB_PORT=18083\nWEB_BIND_ADDRESS=127.0.0.1\nPUBLIC_BASE_URL=http://web\nE2E_OPERATOR_PASSWORD=%s\nE2E_FIXTURE_HOST_DIR=%s\n' \
   "$(python3 -c 'import secrets; print(secrets.token_hex(32))')" "$operator_password" "$fixture_dir" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 compose() { "${DOCKER[@]}" compose "${compose_files[@]}" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
 cleanup() {
+  result=$?
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-  if [[ "${UI_E2E_KEEP_IMAGES:-false}" != true ]]; then
+  if [[ "${E2E_KEEP_IMAGES:-false}" != true || $result -ne 0 ]]; then
     compose down --rmi local >/dev/null 2>&1 || true
   fi
   rm -f -- "$ENV_FILE"
@@ -40,7 +42,11 @@ trap cleanup EXIT INT TERM
 FIXTURE_ROOT="$fixture_dir" python3 "$ROOT/tests/e2e/generate_fixtures.py"
 chmod -R a+rX "$fixture_dir"
 
-compose build api web ui-e2e
+if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
+  compose build ui-e2e
+else
+  compose build api web ui-e2e
+fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
 HASH_VALUE="$password_hash" python3 - "$ENV_FILE" <<'PY'

@@ -22,14 +22,20 @@ fi
 
 umask 077
 operator_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-fixture_dir="$(mktemp -d /tmp/kpapers-e2e-fixtures.XXXXXX)"
+mkdir -p "$ROOT/.tmp"
+fixture_dir="$(mktemp -d "$ROOT/.tmp/kpapers-e2e-fixtures.XXXXXX")"
 printf 'OPERATOR_PASSWORD_HASH=helper\nSESSION_SIGNING_KEY=%s\nAPI_URL=http://api:8080\nCOOKIE_SECURE=false\nWEB_PORT=18082\nWEB_BIND_ADDRESS=127.0.0.1\nPUBLIC_BASE_URL=http://web\nE2E_OPERATOR_PASSWORD=%s\nE2E_FIXTURE_HOST_DIR=%s\n' \
   "$(python3 -c 'import secrets; print(secrets.token_hex(32))')" "$operator_password" "$fixture_dir" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 compose() { "${DOCKER[@]}" compose "${compose_files[@]}" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
 cleanup() {
-  compose down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+  result=$?
+  if [[ "${E2E_KEEP_IMAGES:-false}" == true && $result -eq 0 ]]; then
+    compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  else
+    compose down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+  fi
   rm -f -- "$ENV_FILE"
   rm -rf -- "$fixture_dir"
 }
@@ -45,7 +51,11 @@ if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
   printf 'REFERENCE_DOCUMENT_FILENAME=%s\n' "$reference_filename" >> "$ENV_FILE"
 fi
 chmod -R a+rX "$fixture_dir"
-compose build api web
+if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
+  "${DOCKER[@]}" image inspect kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || die 'Shared E2E images are missing; run the integration orchestrator without E2E_SKIP_APP_BUILD.'
+else
+  compose build api web
+fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
 HASH_VALUE="$password_hash" python3 - "$ENV_FILE" <<'PY'

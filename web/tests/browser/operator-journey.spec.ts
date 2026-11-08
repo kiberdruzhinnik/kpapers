@@ -50,6 +50,7 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page.getByText("Folder scan complete")).toBeVisible({ timeout: 30_000 })
 
   await page.getByRole("button", { name: "Review PDFs" }).click()
+  await expect(page).toHaveURL(new RegExp(`/pdf-review/${createdFeed.id}/2026/${createdMonth.id}$`))
   await expect(page.getByRole("combobox", { name: "Feed" })).toHaveValue(createdFeed.id)
   await expect(page.getByRole("combobox", { name: "Year" })).toHaveValue("2026")
   await expect(page.getByRole("combobox", { name: "Month" })).toHaveValue(createdMonth.id)
@@ -65,6 +66,7 @@ test("operator manages a feed, source folder, publication decision, and account 
   expect(sourceResponse.status()).toBe(307)
   expect(decodeURIComponent(sourceResponse.headers().location ?? "")).toContain("/current-month/article-alpha.pdf")
   await page.getByRole("button", { name: "Back to feeds" }).click()
+  await expect(page).toHaveURL(new RegExp(`/feeds/${createdFeed.id}$`))
   await monthCard.getByRole("button", { name: "Review PDFs" }).click()
   await expect(page.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })).toHaveValue("exclude")
   const reloadedAlpha = page.locator("article").filter({ hasText: "article-alpha.pdf" })

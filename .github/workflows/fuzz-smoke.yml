@@ -1,17 +1,26 @@
-name: Fuzz smoke tests
+name: Fuzz tests
 
 on:
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds to fuzz each target
+        required: true
+        default: "1800"
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   fuzz:
-    name: Bounded parser and PDF fuzz smoke
+    name: Parser and PDF fuzzing
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -35,18 +44,19 @@ jobs:
           docker cp "$container:/usr/local/lib/libpdfium.so" "$RUNNER_TEMP/pdfium/libpdfium.so"
           docker rm "$container"
 
-      - name: Run bounded fuzz smoke
+      - name: Fuzz each target
         run: ./scripts/fuzz-smoke.sh
         env:
           PDFIUM_LIB_DIR: ${{ runner.temp }}/pdfium
-          FUZZ_SMOKE_SECONDS: "15"
+          FUZZ_SMOKE_SECONDS: ${{ github.event_name == 'pull_request' && '15' || inputs.duration_seconds || '1800' }}
           FUZZ_OUTPUT_DIR: ${{ runner.temp }}/fuzz-data
+          FUZZ_PRESERVE_OUTPUTS: ${{ github.event_name != 'pull_request' }}
 
-      - name: Upload fuzz crash artifacts
-        if: failure() && always()
+      - name: Upload fuzz corpus and crash artifacts
+        if: always() && (github.event_name != 'pull_request' || failure())
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-crash-artifacts
+          name: ${{ github.event_name == 'pull_request' && 'fuzz-crash-artifacts' || 'extended-fuzz-data' }}
           path: ${{ runner.temp }}/fuzz-data
-          if-no-files-found: ignore
-          retention-days: 14
+          if-no-files-found: ${{ github.event_name == 'pull_request' && 'ignore' || 'warn' }}
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}

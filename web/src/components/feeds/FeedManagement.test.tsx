@@ -23,6 +23,7 @@ function json(body: unknown, status = 200) {
 }
 
 function installFeedApi(initial: TestFeed[] = []) {
+  window.history.replaceState({}, "", "/")
   let feeds = structuredClone(initial)
   let years: { feed_id: string; year: number; active: boolean }[] = []
   let months: { id: string; feed_id: string; year: number; month: number; provider: string; source_url: string; active: boolean; last_attempt_at: string | null; next_refresh_at: string | null; last_result: string | null; last_error: string | null }[] = []
@@ -110,6 +111,11 @@ async function openFeeds(user: ReturnType<typeof userEvent.setup>) {
   const nav = screen.getByRole("navigation", { name: "Primary navigation" })
   await user.click(within(nav).getByRole("button", { name: /Feeds/ }))
   await screen.findByRole("heading", { name: "Feeds" })
+  const feedButton = screen.queryByRole("button", { name: /Ada Lovelace/ })
+  if (feedButton) {
+    await user.click(feedButton)
+    await screen.findByRole("region", { name: "Feed details" })
+  }
 }
 
 describe("feed management workflows", () => {

@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from "vitest"
 import { ApiError, api, request } from "./api"
 
 describe("management API request", () => {
+  it("loads overview counts from the management summary endpoint", async () => {
+    const summary = { source_folder_count: 3, needs_review_count: 2 }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(summary), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(api.overview()).resolves.toEqual(summary)
+    expect(fetchMock).toHaveBeenCalledWith("/api/management/overview", expect.objectContaining({ credentials: "same-origin" }))
+  })
+
   it("sends same-origin credentials and JSON payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":"feed-1"}', {
       status: 201,

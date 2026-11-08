@@ -6,7 +6,7 @@ export default defineConfig({
   testDir: "./tests/browser",
   fullyParallel: true,
   forbidOnly: isCI,
-  retries: isCI ? 1 : 0,
+  retries: 0,
   reporter: isCI ? "github" : "list",
   use: {
     baseURL: process.env.APP_BASE_URL ?? "http://127.0.0.1:8080",
