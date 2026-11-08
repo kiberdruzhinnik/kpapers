@@ -133,6 +133,19 @@ describe("operator session and dashboard shell", () => {
     expect(window.location.pathname).toBe("/pdf-review/feed-1/2026/month-1")
   })
 
+  it("returns from PDF review to the selected feed", async () => {
+    installApi(true)
+    window.history.replaceState({}, "", "/pdf-review/feed-1/2026/month-1")
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText("Ada Lovelace · 2026 · November")
+    await user.click(screen.getByRole("button", { name: "Back to feeds" }))
+
+    expect(window.location.pathname).toBe("/feeds/feed-1")
+    expect(await screen.findByRole("region", { name: "Feed details" })).toBeInTheDocument()
+  })
+
   it("updates the browser URL when selecting a feed and returns to Overview from the brand", async () => {
     installApi(true)
     const user = userEvent.setup()

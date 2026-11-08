@@ -420,7 +420,7 @@ function AppContent() {
             ? <Overview feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
             : section === "Feeds"
               ? <FeedManagement feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(`/pdf-review/${encodeURIComponent(month.feed_id)}/${month.year}/${encodeURIComponent(month.id)}`)} onSelectFeed={(feedId) => navigate(feedId ? `/feeds/${encodeURIComponent(feedId)}` : "/feeds")} selectedFeedId={route.feedId ?? null} />
-              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate("/feeds")} onInvalidSelection={() => navigate("/pdf-review", { replace: true })} onSelectionChange={updateReviewSelection} />}
+              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(reviewSelection?.feedId ? `/feeds/${encodeURIComponent(reviewSelection.feedId)}` : "/feeds")} onInvalidSelection={() => navigate("/pdf-review", { replace: true })} onSelectionChange={updateReviewSelection} />}
         </DashboardShell>}
     </>
   )
