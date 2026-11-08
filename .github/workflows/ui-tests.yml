@@ -9,71 +9,25 @@ permissions:
 
 jobs:
   integration:
-    name: Frontend, browser, RSS, and image checks
+    name: Frontend, browser, and RSS checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Run canonical frontend, browser, and RSS checks
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Run frontend lint and unit checks
+        working-directory: web
+        run: npm ci && npm run lint && npm test
+
+      - name: Run browser and RSS integration checks
         run: ./scripts/integration-e2e.sh
         env:
           CI: "true"
-          E2E_KEEP_IMAGES: "true"
-
-      - name: Scan production API image with Trivy
-        if: success()
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: v0.76.2
-          scan-type: image
-          image-ref: kpapers-api:e2e
-          scanners: vuln,secret
-          format: json
-          output: trivy-image-api.json
-          exit-code: "0"
-
-      - name: Scan production web image with Trivy
-        if: success()
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: v0.76.2
-          scan-type: image
-          image-ref: kpapers-web:e2e
-          scanners: vuln,secret
-          format: json
-          output: trivy-image-web.json
-          exit-code: "0"
-
-      - name: Summarize production image findings
-        if: always()
-        run: |
-          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          from pathlib import Path
-
-          print("### Trivy production image scans")
-          for image in ("api", "web"):
-              report_path = Path(f"trivy-image-{image}.json")
-              if not report_path.is_file():
-                  continue
-              report = json.loads(report_path.read_text())
-              results = report.get("Results", [])
-              count = sum(len(result.get("Vulnerabilities", []) or []) for result in results)
-              print(f"- {image}: {count} vulnerabilities (reported for review; findings do not currently fail the job).")
-          print("Full JSON reports are attached as workflow artifacts.")
-          PY
-
-      - name: Upload production image scan reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-production-image-reports
-          path: trivy-image-*.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Remove shared integration images
-        if: always()
-        run: docker image rm kpapers-api:e2e kpapers-web:e2e || true

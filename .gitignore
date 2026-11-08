@@ -6,3 +6,4 @@ backups/
 /target/
 
 .env.ui-e2e
+.tmp/

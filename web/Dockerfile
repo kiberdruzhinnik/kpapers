@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run check
+RUN npm run build
 
 FROM docker.io/library/nginx:1-alpine
 COPY --chmod=755 validate-api-url.sh /docker-entrypoint.d/05-validate-api-url.sh

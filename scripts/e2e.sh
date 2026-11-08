@@ -22,7 +22,8 @@ fi
 
 umask 077
 operator_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
-fixture_dir="$(mktemp -d /tmp/kpapers-e2e-fixtures.XXXXXX)"
+mkdir -p "$ROOT/.tmp"
+fixture_dir="$(mktemp -d "$ROOT/.tmp/kpapers-e2e-fixtures.XXXXXX")"
 printf 'OPERATOR_PASSWORD_HASH=helper\nSESSION_SIGNING_KEY=%s\nAPI_URL=http://api:8080\nCOOKIE_SECURE=false\nWEB_PORT=18082\nWEB_BIND_ADDRESS=127.0.0.1\nPUBLIC_BASE_URL=http://web\nE2E_OPERATOR_PASSWORD=%s\nE2E_FIXTURE_HOST_DIR=%s\n' \
   "$(python3 -c 'import secrets; print(secrets.token_hex(32))')" "$operator_password" "$fixture_dir" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
