@@ -1005,9 +1005,8 @@ mod tests {
     use super::{
         StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
         is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
-        push_styled_char, strip_page_label, strip_sponsr_branding, strip_sponsr_preamble,
-        pages_to_text, push_styled_char, strip_page_label, strip_sponsr_preamble,
-        text_to_safe_html,
+        pages_to_text, push_styled_char, strip_page_label, strip_sponsr_branding,
+        strip_sponsr_preamble, text_to_safe_html,
     };
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
