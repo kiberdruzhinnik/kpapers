@@ -55,6 +55,11 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+          cache-workspace-crates: true
 
       - name: Run Rust checks
         run: ./scripts/check-rust.sh
