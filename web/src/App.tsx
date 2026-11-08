@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { BookOpenText, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, ShieldCheck } from "lucide-react"
 import { BrowserRouter, Link, useLocation, useNavigate } from "react-router-dom"
 import { ApiError, api, type Feed, type OverviewSummary } from "@/lib/api"
@@ -299,7 +299,7 @@ function AppContent() {
   const [summary, setSummary] = useState<OverviewSummary | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [summaryError, setSummaryError] = useState<string | null>(null)
-  const route = routeFromPath(location.pathname)
+  const route = useMemo(() => routeFromPath(location.pathname), [location.pathname])
   const section = route?.section ?? "Overview"
   const reviewSelection = route?.reviewSelection ?? null
   const requestedFeedId = route?.feedId ?? reviewSelection?.feedId
