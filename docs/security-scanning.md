@@ -5,7 +5,7 @@
 Pull requests to `main` and pushes to `main` run:
 
 - Clippy with warnings denied for the API and fuzz workspace, Rust formatting, and Rust tests.
-- ShellCheck v0.11.0 for `scripts/*.sh` and Ruff 0.15.10 for `tests/e2e/`.
+- ShellCheck 0.9.0 for `scripts/*.sh` and Ruff 0.15.10 for `tests/e2e/`.
 - Semgrep Community Edition 1.183.0 for maintained code in `src/`, `web/src/`, `scripts/`, and `tests/e2e/`. The scan report is attached to the workflow run.
 - Trivy 0.76.2 for dependency, secret, and configuration scans of the repository and for vulnerability/secret scans of the built API and web images. JSON reports are attached to the workflow run.
 
