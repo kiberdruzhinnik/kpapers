@@ -156,6 +156,7 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
     if let Some(first_page) = pages.first_mut() {
         strip_sponsr_preamble(first_page);
     }
+    strip_sponsr_branding(&mut pages);
 
     let first_page = pages
         .first()
@@ -808,6 +809,23 @@ fn strip_sponsr_preamble(page: &mut Vec<StyledLine>) {
     }
 }
 
+fn strip_sponsr_branding(pages: &mut [Vec<StyledLine>]) {
+    for page in pages {
+        page.retain(|line| !is_sponsr_branding_line(&line.text()));
+    }
+}
+
+fn is_sponsr_branding_line(text: &str) -> bool {
+    let normalized = text
+        .trim()
+        .to_lowercase()
+        .replace(['\u{2013}', '\u{2014}', '\u{2212}'], "-")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    normalized == "кримсон аналитика - crimsonanalytics"
+}
+
 fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     let mut grouped_pages = pages.to_vec();
     merge_wrapped_title_lines(&mut grouped_pages);
@@ -987,8 +1005,8 @@ mod tests {
     use super::{
         StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
         is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
-        pages_to_text, push_styled_char, strip_page_label, strip_sponsr_preamble,
-        text_to_safe_html,
+        pages_to_text, push_styled_char, strip_page_label, strip_sponsr_branding,
+        strip_sponsr_preamble, text_to_safe_html,
     };
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
@@ -1040,6 +1058,77 @@ mod tests {
         let mut page = vec![line("sponsr", 24.0), line("Short text", 12.0)];
         strip_sponsr_preamble(&mut page);
         assert_eq!(page.len(), 2);
+    }
+
+    #[test]
+    fn strips_sponsr_branding_from_all_pages_but_preserves_article_mentions() {
+        let mut pages = vec![
+            vec![
+                line("Article before branding.", 12.0),
+                StyledLine {
+                    runs: ["Кримсон", " Аналитика — ", "CrimsonAnalytics"]
+                        .into_iter()
+                        .map(|text| StyledRun {
+                            text: text.into(),
+                            bold: false,
+                            italic: false,
+                        })
+                        .collect(),
+                    size: 9.0,
+                    gap_before: 0.0,
+                    left: 50.0,
+                },
+                line("Article after branding.", 12.0),
+                line("CrimsonAlter – Analytics", 9.0),
+            ],
+            vec![
+                line(
+                    "The article discusses Кримсон Аналитика – CrimsonAnalytics in context.",
+                    12.0,
+                ),
+                line("Кримсон Аналитика – CrimsonAnalytics", 9.0),
+            ],
+        ];
+
+        strip_sponsr_branding(&mut pages);
+
+        let text = pages
+            .iter()
+            .flatten()
+            .map(StyledLine::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let html = lines_to_html(&pages);
+        assert!(text.contains("Article before branding."));
+        assert!(text.contains("Article after branding."));
+        assert!(
+            text.contains("The article discusses Кримсон Аналитика – CrimsonAnalytics in context.")
+        );
+        assert!(text.contains("CrimsonAlter – Analytics"));
+        assert_eq!(text.matches("Кримсон Аналитика").count(), 1);
+        assert_eq!(html.matches("Кримсон Аналитика").count(), 1);
+        assert!(!html.contains("Кримсон Аналитика — CrimsonAnalytics</p>"));
+    }
+
+    #[test]
+    fn strips_branding_from_the_supplied_pdf_opening_sequence() {
+        let mut pages = vec![vec![
+            line(
+                "Предыдущий апдейт тут -> sponsr.ru/crimsonanalytics/172225",
+                10.0,
+            ),
+            line("Кримсон Аналитика – CrimsonAnalytics", 9.0),
+            line("Традиционно напоминаю несколько моментов:", 12.0),
+        ]];
+
+        strip_sponsr_branding(&mut pages);
+
+        let html = lines_to_html(&pages);
+        assert_eq!(
+            html,
+            "<p>Предыдущий апдейт тут -&gt; sponsr.ru/crimsonanalytics/172225</p>\n<h1>Традиционно напоминаю несколько моментов:</h1>"
+        );
+        assert!(!html.contains("Кримсон Аналитика"));
     }
 
     fn line(text: &str, size: f32) -> StyledLine {
@@ -1214,6 +1303,7 @@ mod tests {
         let processed = cache_fingerprint(source);
         assert!(processed.starts_with("pdf-text-v10:"));
         assert_ne!(processed, format!("pdf-text-v9:{source}"));
+        assert_ne!(processed, format!("pdf-text-v8:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
     }
