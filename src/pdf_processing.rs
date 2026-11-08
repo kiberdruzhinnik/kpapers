@@ -687,15 +687,15 @@ fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
             previous_page_last = None;
             continue;
         };
-        if let Some(previous) = previous_page_last {
-            if !text.is_empty() {
-                let separator = if page_boundary_continues(previous, first, body_size) {
-                    "\n"
-                } else {
-                    "\n\n"
-                };
-                text.push_str(separator);
-            }
+        if let Some(previous) = previous_page_last
+            && !text.is_empty()
+        {
+            let separator = if page_boundary_continues(previous, first, body_size) {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            text.push_str(separator);
         }
         if !text.is_empty() && previous_page_last.is_none() {
             text.push_str("\n\n");
