@@ -14,7 +14,9 @@ RUN apt-get update \
         arm64) archive="pdfium-linux-arm64.tgz"; checksum="8b8818f2ec57d1b213d952ca6d7f0ffeca9d0110487d0e20ad83ba918bc92efa" ;; \
         *) echo "Unsupported Pdfium target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/$archive" -o /tmp/pdfium.tgz \
+    && curl --fail --show-error --location --retry 5 --retry-delay 2 --retry-max-time 120 \
+        "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/$archive" \
+        -o /tmp/pdfium.tgz \
     && echo "$checksum  /tmp/pdfium.tgz" | sha256sum -c - \
     && mkdir -p /usr/local/lib \
     && tar -xzf /tmp/pdfium.tgz -C /usr/local/lib --strip-components=1 lib/libpdfium.so \
