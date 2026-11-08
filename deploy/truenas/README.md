@@ -21,7 +21,7 @@ This stack pulls the public API and web images from GitHub Container Registry. K
 
    Put the generated values in `SESSION_SIGNING_KEY` and `OPERATOR_PASSWORD_HASH` in `.env`. Wrap the password hash in single quotes because PHC hashes contain `$`, for example `OPERATOR_PASSWORD_HASH='$argon2id$v=19$…'`. Do not commit `.env` or share its contents. Use a strong, unique operator password.
 
-3. Set `PUBLIC_BASE_URL` to the URL operators use to reach the service. Keep `COOKIE_SECURE=true` when HTTPS is configured at a reverse proxy. Set `WEB_PORT` to the desired TrueNAS host port.
+3. Set `API_URL` to the API's internal origin as reachable from the web container. The default Compose service name is `api`, so the example uses `http://api:8080`; if you rename that service, use its Compose service name here. Set `PUBLIC_BASE_URL` to the URL operators use to reach the service. Keep `COOKIE_SECURE=true` when HTTPS is configured at a reverse proxy. Set `WEB_PORT` to the desired TrueNAS host port.
 
 ## Start and update
 
