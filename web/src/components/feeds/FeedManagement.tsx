@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { Archive, Check, ChevronRight, Copy, FileText, Plus, RefreshCw, Rss, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Feed, type Month } from "@/lib/api"
@@ -217,22 +217,34 @@ function copyTextWithDocument(value: string) {
   }
 }
 
-export function FeedManagement({ feeds, onFeedsChange, onReviewMonth }: {
+export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFeedId, onSelectFeed }: {
   feeds: Feed[]
   onFeedsChange: (feeds: Feed[]) => void
   onReviewMonth: (month: Month) => void
+  selectedFeedId?: string | null
+  onSelectFeed?: (feedId: string | null) => void
 }) {
   const activeFeeds = useMemo(() => feeds.filter((feed) => feed.active), [feeds])
   const archivedFeeds = useMemo(() => feeds.filter((feed) => !feed.active), [feeds])
-  const [selectedId, setSelectedId] = useState<string | null>(() => activeFeeds[0]?.id ?? null)
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(() => activeFeeds[0]?.id ?? null)
+  const selectedId = selectedFeedId === undefined ? localSelectedId : selectedFeedId
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const selectedFeed = feeds.find((feed) => feed.id === selectedId) ?? null
+
+  function selectFeed(id: string | null) {
+    setLocalSelectedId(id)
+    onSelectFeed?.(id)
+  }
+
+  useEffect(() => {
+    if (selectedFeedId !== undefined) setLocalSelectedId(selectedFeedId)
+  }, [selectedFeedId])
 
   async function reloadFeeds(selectId?: string) {
     const loaded = await api.feeds()
     onFeedsChange(loaded)
-    if (selectId) setSelectedId(selectId)
-    else if (selectedId && !loaded.some((feed) => feed.id === selectedId && feed.active)) setSelectedId(loaded.find((feed) => feed.active)?.id ?? null)
+    if (selectId) selectFeed(selectId)
+    else if (selectedId && !loaded.some((feed) => feed.id === selectedId && feed.active)) selectFeed(loaded.find((feed) => feed.active)?.id ?? null)
   }
 
   async function create(values: { display_name: string; description: string; refresh_interval_seconds: number | null }) {
@@ -276,13 +288,13 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth }: {
             <CardHeader className="pb-3"><CardTitle className="text-base">Your feeds</CardTitle><CardDescription>Select a feed to manage its details.</CardDescription></CardHeader>
             <CardContent className="space-y-1 px-2 pb-3">
               {activeFeeds.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">No active feeds yet.</p>}
-              {activeFeeds.map((feed) => <button aria-current={selectedId === feed.id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors ${selectedId === feed.id ? "bg-primary/8 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`} key={feed.id} onClick={() => setSelectedId(feed.id)} type="button">
+              {activeFeeds.map((feed) => <button aria-current={selectedId === feed.id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors ${selectedId === feed.id ? "bg-primary/8 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`} key={feed.id} onClick={() => selectFeed(feed.id)} type="button">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background"><Rss aria-hidden="true" className="size-3.5" /></span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{feed.display_name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{feed.description || "No description"}</span></span>
                 <ChevronRight aria-hidden="true" className="size-4 shrink-0 opacity-50" />
               </button>)}
               {archivedFeeds.length > 0 && <div className="mt-3 border-t px-2 pt-3"><p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Archived</p>
-                {archivedFeeds.map((feed) => <button className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedId === feed.id ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted"}`} key={feed.id} onClick={() => setSelectedId(feed.id)} type="button"><Archive aria-hidden="true" className="size-3.5" /><span className="min-w-0 flex-1 truncate">{feed.display_name}</span><ChevronRight aria-hidden="true" className="size-3.5" /></button>)}
+                {archivedFeeds.map((feed) => <button className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedId === feed.id ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted"}`} key={feed.id} onClick={() => selectFeed(feed.id)} type="button"><Archive aria-hidden="true" className="size-3.5" /><span className="min-w-0 flex-1 truncate">{feed.display_name}</span><ChevronRight aria-hidden="true" className="size-3.5" /></button>)}
               </div>}
             </CardContent>
           </Card>

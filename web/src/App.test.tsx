@@ -10,6 +10,12 @@ const sampleFeed = {
   active: true,
   refresh_interval_seconds: null,
 }
+const secondFeed = { ...sampleFeed, id: "feed-2", display_name: "Grace Hopper", description: "Compiler notes" }
+const sampleMonth = {
+  id: "month-1", feed_id: "feed-1", year: 2026, month: 11, provider: "fixture", source_url: "fixture://source/",
+  active: true, last_attempt_at: null, next_refresh_at: null, last_result: null, last_error: null,
+}
+const secondMonth = { ...sampleMonth, id: "month-2", feed_id: "feed-2", year: 2025, month: 12 }
 
 function response(body: unknown, status = 200) {
   return new Response(body === null ? null : JSON.stringify(body), {
@@ -18,7 +24,8 @@ function response(body: unknown, status = 200) {
   })
 }
 
-function installApi(initiallySignedIn = false) {
+function installApi(initiallySignedIn = false, overviewResponse: () => Promise<Response> = async () => response({ source_folder_count: 3, needs_review_count: 2 })) {
+  window.history.replaceState({}, "", "/")
   let signedIn = initiallySignedIn
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
@@ -33,7 +40,14 @@ function installApi(initiallySignedIn = false) {
       signedIn = true
       return response({ authenticated: true })
     }
-    if (path === "/api/management/feeds") return signedIn ? response([sampleFeed]) : response(null, 401)
+    if (path === "/api/management/feeds") return signedIn ? response([sampleFeed, secondFeed]) : response(null, 401)
+    if (path === "/api/management/overview") return signedIn ? overviewResponse() : response(null, 401)
+    if (path === "/api/management/feeds/feed-1/years") return signedIn ? response([{ feed_id: "feed-1", year: 2026, active: true }]) : response(null, 401)
+    if (path === "/api/management/feeds/feed-2/years") return signedIn ? response([{ feed_id: "feed-2", year: 2025, active: true }]) : response(null, 401)
+    if (path === "/api/management/feeds/feed-1/years/2026/months") return signedIn ? response([sampleMonth]) : response(null, 401)
+    if (path === "/api/management/feeds/feed-2/years/2025/months") return signedIn ? response([secondMonth]) : response(null, 401)
+    if (path === "/api/management/months/month-1/documents") return signedIn ? response([]) : response(null, 401)
+    if (path === "/api/management/months/month-2/documents") return signedIn ? response([]) : response(null, 401)
     return response(null, 404)
   })
   vi.stubGlobal("fetch", fetchMock)
@@ -49,6 +63,13 @@ describe("operator session and dashboard shell", () => {
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeInTheDocument()
     expect(screen.getByText("Active feeds")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Create feed" })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId("source-folder-count")).toHaveTextContent("3")
+      expect(screen.getByTestId("needs-review-count")).toHaveTextContent("2")
+    })
+    expect(screen.queryByText("Refresh scheduler")).not.toBeInTheDocument()
+    expect(screen.queryByText("Kpapers operator desk")).not.toBeInTheDocument()
+    expect(screen.queryByText("Feeds update on your schedule")).not.toBeInTheDocument()
   })
 
   it("keeps management private and supports keyboard-accessible sign-in feedback", async () => {
@@ -87,10 +108,127 @@ describe("operator session and dashboard shell", () => {
     await user.click(within(nav).getByRole("button", { name: /Feeds/ }))
     expect(await screen.findByRole("heading", { name: "Feeds" })).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /PDF review/ }))
-    expect(await screen.findByRole("heading", { name: "PDF review" })).toBeInTheDocument()
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/pdf-review/))
+    await screen.findByText("Ada Lovelace · 2026 · November")
 
     await user.click(screen.getByRole("button", { name: /Sign out/ }))
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/management/session", expect.objectContaining({ method: "DELETE" })))
+  })
+
+  it("opens a selected feed and PDF review month directly from their URLs", async () => {
+    installApi(true)
+    window.history.replaceState({}, "", "/feeds/feed-1")
+
+    const { unmount } = render(<App />)
+    expect(await screen.findByRole("region", { name: "Feed details" })).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/feeds/feed-1")
+
+    unmount()
+    window.history.replaceState({}, "", "/pdf-review/feed-1/2026/month-1")
+    render(<App />)
+
+    expect(await screen.findByRole("heading", { name: "PDF review" })).toBeInTheDocument()
+    expect(await screen.findByText("Ada Lovelace · 2026 · November")).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/pdf-review/feed-1/2026/month-1")
+  })
+
+  it("updates the browser URL when selecting a feed and returns to Overview from the brand", async () => {
+    installApi(true)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByRole("heading", { name: "Overview" })
+    const nav = screen.getByRole("navigation", { name: "Primary navigation" })
+    await user.click(within(nav).getByRole("button", { name: /Feeds/ }))
+    expect(window.location.pathname).toBe("/feeds")
+    await user.click(await screen.findByRole("button", { name: /Ada Lovelace/ }))
+    expect(window.location.pathname).toBe("/feeds/feed-1")
+    await user.click(screen.getAllByRole("link", { name: "Kpapers overview" })[0])
+    expect(window.location.pathname).toBe("/")
+    window.history.back()
+    await waitFor(() => expect(window.location.pathname).toBe("/feeds/feed-1"))
+  })
+
+  it("recovers to the review chooser when a bookmarked month is no longer available", async () => {
+    installApi(true)
+    window.history.replaceState({}, "", "/pdf-review/feed-1/2026/removed-month")
+    render(<App />)
+
+    await screen.findByRole("heading", { name: "PDF review" })
+    await waitFor(() => expect(window.location.pathname).toBe("/pdf-review"))
+    expect(await screen.findByText("The requested review month is no longer available.")).toBeInTheDocument()
+  })
+
+  it("keeps PDF review feed, year, and month selections in the URL", async () => {
+    installApi(true)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByRole("heading", { name: "Overview" })
+    const nav = screen.getByRole("navigation", { name: "Primary navigation" })
+    await user.click(within(nav).getByRole("button", { name: /PDF review/ }))
+    await screen.findByRole("combobox", { name: "Month" })
+    await user.selectOptions(screen.getByRole("combobox", { name: "Feed" }), "feed-2")
+
+    await waitFor(() => expect(window.location.pathname).toBe("/pdf-review/feed-2/2025/month-2"))
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Feed" })).toHaveValue("feed-2")
+      expect(screen.getByRole("combobox", { name: "Year" })).toHaveValue("2025")
+      expect(screen.getByRole("combobox", { name: "Month" })).toHaveValue("month-2")
+    })
+  })
+
+  it("persists the collapsible desktop sidebar state across reloads", async () => {
+    localStorage.removeItem("kpapers.sidebar.collapsed.v1")
+    installApi(true)
+    const user = userEvent.setup()
+    const firstRender = render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+
+    const collapseButton = screen.getByRole("button", { name: "Collapse sidebar" })
+    expect(collapseButton).toHaveAttribute("aria-expanded", "true")
+    collapseButton.focus()
+    await user.keyboard("{Enter}")
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false")
+    expect(localStorage.getItem("kpapers.sidebar.collapsed.v1")).toBe("collapsed")
+
+    firstRender.unmount()
+    render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false")
+  })
+
+  it("shows zero counts when there are no source folders or PDFs needing review", async () => {
+    installApi(true, async () => response({ source_folder_count: 0, needs_review_count: 0 }))
+    render(<App />)
+
+    await screen.findByRole("heading", { name: "Overview" })
+    await waitFor(() => {
+      expect(screen.getByTestId("source-folder-count")).toHaveTextContent("0")
+      expect(screen.getByTestId("needs-review-count")).toHaveTextContent("0")
+    })
+  })
+
+  it("shows loading and an unavailable state for Overview count requests", async () => {
+    let resolveSummary!: (value: Response) => void
+    const pendingSummary = () => new Promise<Response>((resolve) => { resolveSummary = resolve })
+    installApi(true, pendingSummary)
+    const { unmount } = render(<App />)
+
+    await screen.findByRole("heading", { name: "Overview" })
+    expect(screen.getByTestId("source-folder-count")).toHaveTextContent("Loading…")
+    expect(screen.getByTestId("needs-review-count")).toHaveTextContent("Loading…")
+    resolveSummary(response({ source_folder_count: 4, needs_review_count: 1 }))
+    await waitFor(() => expect(screen.getByTestId("source-folder-count")).toHaveTextContent("4"))
+
+    unmount()
+    installApi(true, async () => response(null, 503))
+    render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+    await waitFor(() => {
+      expect(screen.getByTestId("source-folder-count")).toHaveTextContent("Unavailable")
+      expect(screen.getByTestId("needs-review-count")).toHaveTextContent("Unavailable")
+    })
   })
 })

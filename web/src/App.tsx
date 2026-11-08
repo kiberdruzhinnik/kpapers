@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
-import { Activity, BookOpenText, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, Plus, Rss, ShieldCheck } from "lucide-react"
-import { ApiError, api, type Feed } from "@/lib/api"
+import { BookOpenText, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, ShieldCheck } from "lucide-react"
+import { BrowserRouter, Link, useLocation, useNavigate } from "react-router-dom"
+import { ApiError, api, type Feed, type OverviewSummary } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,7 @@ import { toast } from "sonner"
 
 type SessionState = "checking" | "signed-out" | "signed-in"
 export type Section = "Overview" | "Feeds" | "PDF review"
+const SIDEBAR_STORAGE_KEY = "kpapers.sidebar.collapsed.v1"
 
 const navItems: { label: Section; description: string; icon: typeof LayoutDashboard }[] = [
   { label: "Overview", description: "Workspace summary", icon: LayoutDashboard },
@@ -32,6 +34,53 @@ function Brand({ compact = false }: { compact?: boolean }) {
       </div>}
     </div>
   )
+}
+
+type ReviewSelection = { feedId: string; year?: number; monthId?: string }
+type DashboardRoute = { section: Section; feedId?: string; reviewSelection?: ReviewSelection } | null
+
+function routeFromPath(pathname: string): DashboardRoute {
+  if (pathname === "/") return { section: "Overview" }
+  if (pathname === "/feeds") return { section: "Feeds" }
+  if (pathname === "/pdf-review") return { section: "PDF review" }
+
+  const feedMatch = pathname.match(/^\/feeds\/([^/]+)$/)
+  if (feedMatch) {
+    try { return { section: "Feeds", feedId: decodeURIComponent(feedMatch[1]) } } catch { return null }
+  }
+
+  const reviewMatch = pathname.match(/^\/pdf-review\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?$/)
+  if (reviewMatch) {
+    const year = reviewMatch[2] === undefined ? undefined : Number(reviewMatch[2])
+    if (year !== undefined && (!Number.isInteger(year) || year < 1 || year > 9999)) return null
+    try {
+      return {
+        section: "PDF review",
+        reviewSelection: {
+          feedId: decodeURIComponent(reviewMatch[1]),
+          ...(year === undefined ? {} : { year }),
+          ...(reviewMatch[3] === undefined ? {} : { monthId: decodeURIComponent(reviewMatch[3]) }),
+        },
+      }
+    } catch { return null }
+  }
+
+  return null
+}
+
+function sectionPath(section: Section) {
+  return section === "Overview" ? "/" : section === "Feeds" ? "/feeds" : "/pdf-review"
+}
+
+function storedSidebarState() {
+  try { return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "collapsed" } catch { return false }
+}
+
+function reviewPath(selection: ReviewSelection) {
+  const feedPath = `/pdf-review/${encodeURIComponent(selection.feedId)}`
+  if (selection.year === undefined) return feedPath
+  if (selection.monthId === undefined) return `${feedPath}/${selection.year}`
+  return `${feedPath}/${selection.year}/${encodeURIComponent(selection.monthId)}`
 }
 
 export function SignInPanel({ onSubmit, error, pending }: {
@@ -82,26 +131,28 @@ export function SignInPanel({ onSubmit, error, pending }: {
   )
 }
 
-function Navigation({ section, onNavigate, onSelect }: {
+function Navigation({ section, onNavigate, onSelect, collapsed = false }: {
   section: Section
   onNavigate: (section: Section) => void
   onSelect?: () => void
+  collapsed?: boolean
 }) {
   return (
     <nav aria-label="Primary navigation" className="space-y-1">
-      <p className="px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Workspace</p>
+      <p className={`px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground ${collapsed ? "sr-only" : ""}`}>Workspace</p>
       {navItems.map(({ label, description, icon: Icon }) => (
         <button
           key={label}
           aria-current={section === label ? "page" : undefined}
           aria-label={`${label} — ${description}`}
-          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${section === label ? "bg-primary/8 font-medium text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          className={`flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-3 px-3 text-left"} rounded-lg py-2.5 text-sm transition-colors ${section === label ? "bg-primary/8 font-medium text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          title={collapsed ? label : undefined}
           onClick={() => { onNavigate(label); onSelect?.() }}
           type="button"
         >
           <Icon aria-hidden="true" className={`size-4 ${section === label ? "text-primary" : ""}`} />
-          <span>{label}</span>
-          {label === "Feeds" && <ChevronDown aria-hidden="true" className="ml-auto size-3.5 -rotate-90 opacity-40" />}
+          <span className={collapsed ? "sr-only" : ""}>{label}</span>
+          {!collapsed && label === "Feeds" && <ChevronDown aria-hidden="true" className="ml-auto size-3.5 -rotate-90 opacity-40" />}
         </button>
       ))}
     </nav>
@@ -116,24 +167,31 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
   onSectionChange: (section: Section) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(storedSidebarState)
+
+  useEffect(() => {
+    try { window.localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarCollapsed ? "collapsed" : "expanded") } catch { /* Storage may be unavailable in restricted browsers. */ }
+  }, [sidebarCollapsed])
+
   return (
     <div className="min-h-svh bg-muted/30 text-foreground">
       <div className="flex min-h-svh">
-        <aside className="hidden w-[248px] shrink-0 flex-col border-r bg-background px-4 py-5 md:flex">
-          <div className="px-2 pb-8"><Brand /></div>
-          <Navigation section={section} onNavigate={onSectionChange} />
-          <div className="mt-7 px-3">
-            <div className="flex items-center justify-between pb-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Your feeds</span>
-              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{feedCount}</span>
-            </div>
-            {feedCount === 0 && <p className="text-xs leading-relaxed text-muted-foreground">Your author feeds will appear here.</p>}
+        <aside className={`hidden shrink-0 flex-col border-r bg-background py-5 transition-[width] md:flex ${sidebarCollapsed ? "w-[72px] px-2" : "w-[248px] px-4"}`}>
+          <div className={`flex items-start pb-8 ${sidebarCollapsed ? "flex-col items-center gap-3" : "justify-between gap-2 px-2"}`}>
+            <Link aria-label="Kpapers overview" to="/"><Brand compact={sidebarCollapsed} /></Link>
+            <Button aria-expanded={!sidebarCollapsed} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} size="icon" title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} variant="ghost">
+              {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+            </Button>
           </div>
-          <div className="mt-auto rounded-xl border bg-muted/35 p-3">
-            <div className="flex items-start gap-2.5">
-              <div className="mt-0.5 flex size-7 items-center justify-center rounded-lg bg-background text-muted-foreground"><Activity aria-hidden="true" className="size-3.5" /></div>
-              <div><p className="text-xs font-medium">Refresh scheduler</p><p className="mt-1 text-[11px] text-muted-foreground">Status is shown per source</p></div>
+          <Navigation collapsed={sidebarCollapsed} section={section} onNavigate={onSectionChange} />
+          <div className={`mt-7 ${sidebarCollapsed ? "flex justify-center" : "px-3"}`}>
+            <div className={`pb-2 ${sidebarCollapsed ? "sr-only" : "flex items-center justify-between"}`}>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Your feeds</span>
+              {!sidebarCollapsed && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{feedCount}</span>}
             </div>
+            {sidebarCollapsed
+              ? <span aria-label={`${feedCount} active feeds`} className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{feedCount}</span>
+              : feedCount === 0 && <p className="text-xs leading-relaxed text-muted-foreground">Your author feeds will appear here.</p>}
           </div>
         </aside>
 
@@ -145,7 +203,7 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
                   <Button aria-label="Open navigation" className="md:hidden" size="icon" variant="ghost"><Menu aria-hidden="true" /></Button>
                 </SheetTrigger>
                 <SheetContent className="w-[280px] max-w-[85vw] p-4" side="left">
-                  <SheetHeader className="px-2 pb-5"><SheetTitle><Brand /></SheetTitle></SheetHeader>
+                  <SheetHeader className="px-2 pb-5"><SheetTitle><Link aria-label="Kpapers overview" to="/" onClick={() => setMenuOpen(false)}><Brand /></Link></SheetTitle></SheetHeader>
                   <Navigation section={section} onNavigate={onSectionChange} onSelect={() => setMenuOpen(false)} />
                 </SheetContent>
               </Sheet>
@@ -165,17 +223,21 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
           <main aria-live="polite" className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-7 sm:px-6 sm:py-8 lg:px-10">
             {children}
           </main>
-          <footer className="flex items-center justify-between border-t bg-background px-4 py-3 text-[11px] text-muted-foreground sm:px-6 lg:px-10">
-            <span className="flex items-center gap-1.5"><Rss aria-hidden="true" className="size-3" /> Kpapers operator desk</span>
-            <span>Feeds update on your schedule</span>
-          </footer>
         </div>
       </div>
     </div>
   )
 }
 
-function Overview({ feedCount, onNavigate }: { feedCount: number; onNavigate: (section: Section) => void }) {
+function Overview({ feedCount, onNavigate, summary, summaryLoading, summaryError }: {
+  feedCount: number
+  onNavigate: (section: Section) => void
+  summary: OverviewSummary | null
+  summaryLoading: boolean
+  summaryError: string | null
+}) {
+  const metric = (value: number | undefined) => summaryLoading ? "Loading…" : summaryError || value === undefined ? "Unavailable" : value.toLocaleString()
+
   return (
     <div className="space-y-7">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -193,17 +255,17 @@ function Overview({ feedCount, onNavigate }: { feedCount: number; onNavigate: (s
         </Card>
         <Card>
           <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div><CardDescription>Source folders</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums">—</CardTitle></div>
+            <div><CardDescription>Source folders</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums" data-testid="source-folder-count">{metric(summary?.source_folder_count)}</CardTitle></div>
             <div className="flex size-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600"><Files aria-hidden="true" className="size-4" /></div>
           </CardHeader>
-          <CardContent><p className="text-xs text-muted-foreground">Configured year and month folders</p></CardContent>
+          <CardContent><p className="text-xs text-muted-foreground">Configured source folders for active feeds</p>{summaryError && <p className="mt-1 text-xs text-destructive">Count unavailable</p>}</CardContent>
         </Card>
         <Card className="sm:col-span-2 xl:col-span-1">
           <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div><CardDescription>Needs review</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums">—</CardTitle></div>
+            <div><CardDescription>Needs review</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums" data-testid="needs-review-count">{metric(summary?.needs_review_count)}</CardTitle></div>
             <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500/10 text-amber-700"><BookOpenText aria-hidden="true" className="size-4" /></div>
           </CardHeader>
-          <CardContent><p className="text-xs text-muted-foreground">Documents awaiting a publication decision</p></CardContent>
+          <CardContent><p className="text-xs text-muted-foreground">PDFs with incomplete or failed classification processing</p>{summaryError && <p className="mt-1 text-xs text-destructive">Count unavailable</p>}</CardContent>
         </Card>
       </div>
 
@@ -227,13 +289,23 @@ function Overview({ feedCount, onNavigate }: { feedCount: number; onNavigate: (s
   )
 }
 
-export default function App() {
+function AppContent() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const [session, setSession] = useState<SessionState>("checking")
   const [authError, setAuthError] = useState<string | null>(null)
   const [loginPending, setLoginPending] = useState(false)
   const [feeds, setFeeds] = useState<Feed[]>([])
-  const [section, setSection] = useState<Section>("Overview")
-  const [reviewSelection, setReviewSelection] = useState<{ feedId: string; year: number; monthId: string } | null>(null)
+  const [summary, setSummary] = useState<OverviewSummary | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+  const route = routeFromPath(location.pathname)
+  const section = route?.section ?? "Overview"
+  const reviewSelection = route?.reviewSelection ?? null
+  const requestedFeedId = route?.feedId ?? reviewSelection?.feedId
+  const updateReviewSelection = useCallback((selection: ReviewSelection | null) => {
+    navigate(selection ? reviewPath(selection) : "/pdf-review")
+  }, [navigate])
 
   const restoreSession = useCallback(async () => {
     try {
@@ -254,6 +326,35 @@ export default function App() {
       return false
     }
   }, [])
+
+  useEffect(() => {
+    if (!route) {
+      toast.error("That dashboard page could not be found.")
+      navigate("/", { replace: true })
+    }
+  }, [navigate, route])
+
+  useEffect(() => {
+    if (session !== "signed-in" || !requestedFeedId) return
+    if (feeds.some((feed) => feed.id === requestedFeedId)) return
+    toast.error("That feed is no longer available.")
+    navigate(section === "PDF review" ? "/pdf-review" : "/feeds", { replace: true })
+  }, [feeds, navigate, requestedFeedId, section, session])
+
+  useEffect(() => {
+    if (session !== "signed-in" || section !== "Overview") return
+    let mounted = true
+    setSummaryLoading(true)
+    setSummaryError(null)
+    api.overview().then((result) => {
+      if (mounted) setSummary(result)
+    }).catch(() => {
+      if (mounted) setSummaryError("Overview counts could not be loaded.")
+    }).finally(() => {
+      if (mounted) setSummaryLoading(false)
+    })
+    return () => { mounted = false }
+  }, [section, session])
 
   useEffect(() => {
     let mounted = true
@@ -298,7 +399,7 @@ export default function App() {
       await api.logout()
       setFeeds([])
       setSession("signed-out")
-      setSection("Overview")
+      navigate("/", { replace: true })
       toast.success("Signed out")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not sign out. Please try again.")
@@ -307,18 +408,24 @@ export default function App() {
 
   if (session === "checking") return <div aria-label="Loading workspace" className="flex min-h-svh items-center justify-center bg-muted/30"><div className="flex items-center gap-3 text-sm text-muted-foreground"><span className="size-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />Loading your workspace…</div></div>
 
+  if (!route) return null
+
   return (
     <>
       <Toaster position="top-right" />
       {session === "signed-out"
         ? <SignInPanel error={authError} onSubmit={signIn} pending={loginPending} />
-        : <DashboardShell feedCount={feeds.filter((feed) => feed.active).length} onLogout={() => void signOut()} onSectionChange={setSection} section={section}>
+        : <DashboardShell feedCount={feeds.filter((feed) => feed.active).length} onLogout={() => void signOut()} onSectionChange={(nextSection) => navigate(sectionPath(nextSection))} section={section}>
           {section === "Overview"
-            ? <Overview feedCount={feeds.filter((feed) => feed.active).length} onNavigate={setSection} />
+            ? <Overview feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
             : section === "Feeds"
-              ? <FeedManagement feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => { setReviewSelection({ feedId: month.feed_id, year: month.year, monthId: month.id }); setSection("PDF review") }} />
-              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={reviewSelection?.monthId ?? "review"} onBack={() => setSection("Feeds")} />}
+              ? <FeedManagement feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(`/pdf-review/${encodeURIComponent(month.feed_id)}/${month.year}/${encodeURIComponent(month.id)}`)} onSelectFeed={(feedId) => navigate(feedId ? `/feeds/${encodeURIComponent(feedId)}` : "/feeds")} selectedFeedId={route.feedId ?? null} />
+              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate("/feeds")} onInvalidSelection={() => navigate("/pdf-review", { replace: true })} onSelectionChange={updateReviewSelection} />}
         </DashboardShell>}
     </>
   )
+}
+
+export default function App() {
+  return <BrowserRouter><AppContent /></BrowserRouter>
 }

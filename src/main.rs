@@ -48,6 +48,7 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
             "/api/management/session",
             get(management_session).delete(auth::logout),
         )
+        .route("/api/management/overview", get(feed_api::overview_summary))
         .route(
             "/api/management/feeds",
             get(feed_api::list).post(feed_api::create),
@@ -216,6 +217,17 @@ mod tests {
         let response = app
             .clone()
             .oneshot(
+                Request::get("/api/management/overview")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app
+            .clone()
+            .oneshot(
                 Request::post("/api/login")
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from("{broken"))
@@ -263,6 +275,22 @@ mod tests {
             .next()
             .unwrap()
             .to_owned();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/management/overview")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_body(response).await, serde_json::json!({
+            "source_folder_count": 0,
+            "needs_review_count": 0,
+        }));
 
         let response = app
             .clone()

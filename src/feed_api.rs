@@ -73,6 +73,37 @@ pub struct SourceDocument {
     pub extraction_status: String,
     pub last_error: Option<String>,
 }
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct OverviewSummary {
+    pub source_folder_count: i64,
+    pub needs_review_count: i64,
+}
+
+pub async fn overview_summary(
+    State(pool): State<SqlitePool>,
+) -> Result<Json<OverviewSummary>, StatusCode> {
+    sqlx::query_as::<_, OverviewSummary>(
+        "SELECT \
+            (SELECT COUNT(*) FROM feed_months fm \
+             JOIN feed_years fy ON fy.feed_id = fm.feed_id AND fy.year = fm.year \
+             JOIN feeds f ON f.id = fm.feed_id \
+             WHERE fm.active = 1 AND fy.active = 1 AND f.active = 1) AS source_folder_count, \
+            (SELECT COUNT(*) FROM source_documents sd \
+             JOIN feed_months fm ON fm.id = sd.month_id \
+             JOIN feed_years fy ON fy.feed_id = fm.feed_id AND fy.year = fm.year \
+             JOIN feeds f ON f.id = fm.feed_id \
+             WHERE fm.active = 1 AND fy.active = 1 AND f.active = 1 \
+               AND (sd.extraction_status IN ('pending', 'failure') \
+                    OR sd.promotional_classification NOT IN ('publish', 'promotional'))) \
+             AS needs_review_count",
+    )
+    .fetch_one(&pool)
+    .await
+    .map(Json)
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 #[derive(Deserialize)]
 pub struct PromotionOverride {
     pub override_value: Option<String>,
@@ -716,6 +747,41 @@ mod tests {
             permanently_delete_feed(Path(feed.id), state()).await,
             StatusCode::NOT_FOUND
         );
+
+        crate::test_support::cleanup(pool, path).await;
+    }
+
+    #[tokio::test]
+    async fn overview_summary_counts_active_folders_and_documents_needing_processing() {
+        let (pool, path) = crate::test_support::database().await;
+        sqlx::query("INSERT INTO feeds (id, slug, display_name) VALUES ('active-feed', 'active-feed', 'Active')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO feeds (id, slug, display_name, active) VALUES ('archived-feed', 'archived-feed', 'Archived', 0)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO feed_years (feed_id, year) VALUES ('active-feed', 2026), ('active-feed', 2025), ('archived-feed', 2026)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("UPDATE feed_years SET active=0 WHERE feed_id='active-feed' AND year=2025")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO feed_months (id, feed_id, year, month, provider, source_url) VALUES \
+            ('active-month', 'active-feed', 2026, 1, 'yandex_disk', 'https://disk.yandex.ru/d/active'), \
+            ('archived-month', 'active-feed', 2026, 2, 'yandex_disk', 'https://disk.yandex.ru/d/archived'), \
+            ('archived-year-month', 'active-feed', 2025, 3, 'yandex_disk', 'https://disk.yandex.ru/d/year'), \
+            ('inactive-feed-month', 'archived-feed', 2026, 4, 'yandex_disk', 'https://disk.yandex.ru/d/feed')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("UPDATE feed_months SET active=0 WHERE id='archived-month'")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes, extraction_status) VALUES \
+            ('pending-doc', 'active-month', '/pending.pdf', 'pending.pdf', 'https://example.test/pending.pdf', 'pending', 10, 'pending'), \
+            ('failed-doc', 'active-month', '/failed.pdf', 'failed.pdf', 'https://example.test/failed.pdf', 'failed', 10, 'failure'), \
+            ('success-doc', 'active-month', '/success.pdf', 'success.pdf', 'https://example.test/success.pdf', 'success', 10, 'success'), \
+            ('archived-doc', 'archived-month', '/archived.pdf', 'archived.pdf', 'https://example.test/archived.pdf', 'archived', 10, 'failure')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("UPDATE source_documents SET promotional_override='include' WHERE id='failed-doc'")
+            .execute(&pool).await.unwrap();
+
+        let Json(summary) = overview_summary(State(pool.clone())).await.unwrap();
+        assert_eq!(summary.source_folder_count, 1);
+        assert_eq!(summary.needs_review_count, 2);
 
         crate::test_support::cleanup(pool, path).await;
     }

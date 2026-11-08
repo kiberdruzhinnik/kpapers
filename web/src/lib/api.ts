@@ -37,6 +37,7 @@ export type SourceDocument = {
 }
 
 export type QueuedRefresh = { job_id: string; status: string }
+export type OverviewSummary = { source_folder_count: number; needs_review_count: number }
 export type DiscoveryResult = { discovered_pdfs: number }
 export type ExtractionResult = {
   status: string
@@ -104,6 +105,7 @@ export const api = {
   ),
   logout: () => request<void>("/api/management/session", json("DELETE")),
   feeds: () => request<Feed[]>("/api/management/feeds"),
+  overview: () => request<OverviewSummary>("/api/management/overview"),
   createFeed: (payload: Pick<Feed, "display_name" | "description"> & { refresh_interval_seconds: number | null }) =>
     request<Feed>("/api/management/feeds", json("POST", payload)),
   updateFeed: (id: string, payload: Pick<Feed, "display_name" | "description"> & { refresh_interval_seconds: number | null }) =>
