@@ -35,6 +35,7 @@ else
 OPERATOR_USERNAME=operator
 OPERATOR_PASSWORD_HASH=helper
 SESSION_SIGNING_KEY=$signing_key
+API_URL=http://api:8080
 COOKIE_SECURE=false
 WEB_PORT=18081
 WEB_BIND_ADDRESS=0.0.0.0
@@ -52,6 +53,7 @@ EOF
     printf 'OPERATOR_USERNAME=operator\n'
     printf "OPERATOR_PASSWORD_HASH='%s'\n" "$password_hash"
     printf 'SESSION_SIGNING_KEY=%s\n' "$signing_key"
+    printf 'API_URL=http://api:8080\n'
     printf 'COOKIE_SECURE=false\nWEB_PORT=18081\nWEB_BIND_ADDRESS=0.0.0.0\n'
     printf 'PUBLIC_BASE_URL=http://localhost:18081\n'
     printf 'CURRENT_MONTH_REFRESH_SECONDS=3600\nOLDER_MONTH_REFRESH_SECONDS=86400\n'
