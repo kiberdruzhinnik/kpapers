@@ -17,15 +17,14 @@ RUN apt-get update \
     && version="158.0.8125" \
     && package="bblanchon.pdfium.linux.$version.nupkg" \
     && package_url="https://api.nuget.org/v3-flatcontainer/bblanchon.pdfium.linux/$version/$package" \
+    && package_hash="R5+AXxxZhePcO53ZpS4NXtt+U6Qr24BWwWm3Z9Wy/bRdr2l044WH75UX5vASzUKdY0FUa43ZBezIufVEEld/jA==" \
     && curl --fail --show-error --location --retry 5 --retry-delay 2 --retry-max-time 120 \
         "$package_url" -o "/tmp/$package" \
-    && curl --fail --show-error --location --retry 5 --retry-delay 2 --retry-max-time 120 \
-        "$package_url.sha512" -o /tmp/pdfium.sha512 \
-    && expected_sha512="$(base64 -d /tmp/pdfium.sha512 | od -An -tx1 | tr -d ' \n')" \
+    && expected_sha512="$(printf '%s' "$package_hash" | base64 -d | od -An -tx1 | tr -d ' \n')" \
     && echo "$expected_sha512  /tmp/$package" | sha512sum -c - \
     && mkdir -p /usr/local/lib \
     && unzip -p "/tmp/$package" "runtimes/$runtime/native/libpdfium.so" > /usr/local/lib/libpdfium.so \
-    && rm -rf /var/lib/apt/lists/* /tmp/$package /tmp/pdfium.sha512
+    && rm -rf /var/lib/apt/lists/* /tmp/$package
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
