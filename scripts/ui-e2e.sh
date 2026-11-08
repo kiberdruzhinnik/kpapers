@@ -44,8 +44,13 @@ chmod -R a+rX "$fixture_dir"
 
 if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
   compose build ui-e2e
+elif [[ "${E2E_BUILD_ONLY:-false}" == true ]]; then
+  compose build api web
 else
   compose build api web ui-e2e
+fi
+if [[ "${E2E_BUILD_ONLY:-false}" == true ]]; then
+  exit 0
 fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'

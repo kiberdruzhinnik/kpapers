@@ -1,0 +1,76 @@
+name: Build and test
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build application and test images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build API and web images
+        run: E2E_BUILD_ONLY=true E2E_KEEP_IMAGES=true ./scripts/ui-e2e.sh
+
+      - name: Export built images
+        run: docker save kpapers-api:e2e kpapers-web:e2e | gzip > "$RUNNER_TEMP/kpapers-app-images.tar.gz"
+
+      - name: Upload built images
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpapers-app-images
+          path: ${{ runner.temp }}/kpapers-app-images.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  test:
+    name: Rust, frontend, browser, and RSS checks
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download built images
+        uses: actions/download-artifact@v4
+        with:
+          name: kpapers-app-images
+          path: ${{ runner.temp }}
+
+      - name: Load built images
+        run: gzip -dc "$RUNNER_TEMP/kpapers-app-images.tar.gz" | docker load
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Rust checks
+        run: ./scripts/check-rust.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Run frontend lint and unit checks
+        working-directory: web
+        run: npm ci && npm run lint && npm test
+
+      - name: Run browser and RSS integration checks
+        run: E2E_SKIP_APP_BUILD=true ./scripts/integration-e2e.sh
+        env:
+          CI: "true"
