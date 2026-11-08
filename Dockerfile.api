@@ -8,17 +8,23 @@ RUN cargo build --release
 FROM debian:bookworm-slim AS pdfium
 ARG TARGETARCH
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tar \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
     && case "$TARGETARCH" in \
-        amd64) archive="pdfium-linux-x64.tgz"; checksum="e1c3ce6e270cb5e0c20816b379ad9f2c1309972697c505f508de92bf5e7d6659" ;; \
-        arm64) archive="pdfium-linux-arm64.tgz"; checksum="8b8818f2ec57d1b213d952ca6d7f0ffeca9d0110487d0e20ad83ba918bc92efa" ;; \
+        amd64) runtime="linux-x64" ;; \
+        arm64) runtime="linux-arm64" ;; \
         *) echo "Unsupported Pdfium target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/$archive" -o /tmp/pdfium.tgz \
-    && echo "$checksum  /tmp/pdfium.tgz" | sha256sum -c - \
+    && version="158.0.8125" \
+    && package="bblanchon.pdfium.linux.$version.nupkg" \
+    && package_url="https://api.nuget.org/v3-flatcontainer/bblanchon.pdfium.linux/$version/$package" \
+    && package_hash="R5+AXxxZhePcO53ZpS4NXtt+U6Qr24BWwWm3Z9Wy/bRdr2l044WH75UX5vASzUKdY0FUa43ZBezIufVEEld/jA==" \
+    && curl --fail --show-error --location --retry 5 --retry-delay 2 --retry-max-time 120 \
+        "$package_url" -o "/tmp/$package" \
+    && expected_sha512="$(printf '%s' "$package_hash" | base64 -d | od -An -tx1 | tr -d ' \n')" \
+    && echo "$expected_sha512  /tmp/$package" | sha512sum -c - \
     && mkdir -p /usr/local/lib \
-    && tar -xzf /tmp/pdfium.tgz -C /usr/local/lib --strip-components=1 lib/libpdfium.so \
-    && rm -rf /var/lib/apt/lists/* /tmp/pdfium.tgz
+    && unzip -p "/tmp/$package" "runtimes/$runtime/native/libpdfium.so" > /usr/local/lib/libpdfium.so \
+    && rm -rf /var/lib/apt/lists/* /tmp/$package
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \

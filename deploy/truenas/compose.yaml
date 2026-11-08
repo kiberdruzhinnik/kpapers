@@ -19,6 +19,8 @@ services:
 
   web:
     image: ghcr.io/kiberdruzhinnik/kpapers-web:${IMAGE_TAG:-latest}
+    environment:
+      API_URL: ${API_URL:?Set API_URL in .env to the internal API origin, for example http://api:8080}
     depends_on:
       api:
         condition: service_healthy

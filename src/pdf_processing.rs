@@ -170,17 +170,7 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             )
         })
         .unwrap_or_default();
-    let page_text = pages
-        .iter()
-        .map(|lines| {
-            lines
-                .iter()
-                .map(StyledLine::text)
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let page_text = pages_to_text(&pages);
     let full_text = normalize_text(&page_text);
     if !full_text.chars().any(char::is_alphanumeric) {
         return Err("PDF contains no usable native text".into());
@@ -624,6 +614,105 @@ fn push_line_separator(target: &mut Vec<StyledRun>, next_runs: &[StyledRun]) {
     push_styled_char(target, ' ', bold, italic);
 }
 
+fn body_text_size(pages: &[Vec<StyledLine>]) -> f32 {
+    let mut sizes = pages
+        .iter()
+        .flatten()
+        .filter(|line| !line.text().trim().is_empty())
+        .map(|line| line.size)
+        .collect::<Vec<_>>();
+    sizes.sort_by(f32::total_cmp);
+    let mut size_counts = Vec::<(f32, usize)>::new();
+    for size in sizes {
+        if let Some((_, count)) = size_counts
+            .iter_mut()
+            .find(|(known, _)| (size - *known).abs() < 0.5)
+        {
+            *count += 1;
+        } else {
+            size_counts.push((size, 1));
+        }
+    }
+    size_counts
+        .iter()
+        .map(|(size, _)| *size)
+        .min_by(f32::total_cmp)
+        .unwrap_or(12.0)
+        .max(1.0)
+}
+
+fn is_heading_candidate(line: &StyledLine, body_size: f32) -> bool {
+    line.text().chars().count() <= 160 && line.size >= body_size * 1.08
+}
+
+fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: f32) -> bool {
+    let previous_text = previous.text();
+    let next_text = next.text();
+    let previous_end = previous_text.trim_end_matches(|ch: char| {
+        ch.is_whitespace() || matches!(ch, '"' | '\'' | '»' | '”' | '’' | ')')
+    });
+    let Some(last_char) = previous_end.chars().next_back() else {
+        return false;
+    };
+    if matches!(last_char, '.' | '!' | '?' | '…' | ':' | ';') {
+        return false;
+    }
+    let Some(first_char) = next_text.trim_start().chars().next() else {
+        return false;
+    };
+    if !first_char.is_lowercase()
+        || is_heading_candidate(previous, body_size)
+        || is_heading_candidate(next, body_size)
+    {
+        return false;
+    }
+
+    let similar_size = (previous.size - next.size).abs() <= previous.size.max(next.size) * 0.05;
+    let matching_style = last_content_style(previous)
+        .zip(first_content_style(next))
+        .is_some_and(|(before, after)| before == after);
+    let compatible_position = (previous.left - next.left).abs() <= previous.size * 0.5;
+    similar_size && matching_style && compatible_position
+}
+
+fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
+    let body_size = body_text_size(pages);
+    let mut text = String::new();
+    let mut previous_page_last: Option<&StyledLine> = None;
+    for page in pages {
+        let lines = page
+            .iter()
+            .filter(|line| !line.text().trim().is_empty())
+            .collect::<Vec<_>>();
+        let Some(first) = lines.first() else {
+            previous_page_last = None;
+            continue;
+        };
+        if let Some(previous) = previous_page_last
+            && !text.is_empty()
+        {
+            let separator = if page_boundary_continues(previous, first, body_size) {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            text.push_str(separator);
+        }
+        if !text.is_empty() && previous_page_last.is_none() {
+            text.push_str("\n\n");
+        }
+        text.push_str(
+            &lines
+                .iter()
+                .map(|line| line.text())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        previous_page_last = lines.last().copied();
+    }
+    text
+}
+
 fn merge_wrapped_title_lines(pages: &mut [Vec<StyledLine>]) {
     let all_lines = pages
         .iter()
@@ -750,29 +839,11 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
         return String::new();
     }
 
-    let mut sizes = all_lines.iter().map(|line| line.size).collect::<Vec<_>>();
-    sizes.sort_by(f32::total_cmp);
-    let mut size_counts = Vec::<(f32, usize)>::new();
-    for size in sizes {
-        if let Some((_, count)) = size_counts
-            .iter_mut()
-            .find(|(known, _)| (size - *known).abs() < 0.5)
-        {
-            *count += 1;
-        } else {
-            size_counts.push((size, 1));
-        }
-    }
-    let body_size = size_counts
-        .iter()
-        .map(|(size, _)| *size)
-        .min_by(f32::total_cmp)
-        .unwrap_or(12.0)
-        .max(1.0);
+    let body_size = body_text_size(pages);
     let heading_candidates = all_lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| line.text().chars().count() <= 160 && line.size >= body_size * 1.08)
+        .filter(|(_, line)| is_heading_candidate(line, body_size))
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let title_index = heading_candidates.first().copied();
@@ -799,16 +870,35 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     let mut paragraph_quote = false;
     let mut quote_left = None::<f32>;
     let mut global_index = 0usize;
+    let mut previous_page_last: Option<&StyledLine> = None;
     for page in pages {
-        if !paragraph.is_empty() {
+        let lines = page
+            .iter()
+            .filter(|line| !line.text().trim().is_empty())
+            .collect::<Vec<_>>();
+        let Some(first_line) = lines.first() else {
+            if !paragraph.is_empty() {
+                blocks.push((
+                    "p".to_owned(),
+                    std::mem::take(&mut paragraph),
+                    paragraph_quote,
+                ));
+            }
+            previous_page_last = None;
+            continue;
+        };
+        let page_continues = previous_page_last
+            .is_some_and(|previous| page_boundary_continues(previous, first_line, body_size));
+        if !paragraph.is_empty() && !page_continues {
             blocks.push((
                 "p".to_owned(),
                 std::mem::take(&mut paragraph),
                 paragraph_quote,
             ));
         }
+        let page_last = lines.last().copied();
         let mut previous_line: Option<&StyledLine> = None;
-        for line in page.iter().filter(|line| !line.text().trim().is_empty()) {
+        for line in lines {
             let normalized = line.text().trim().to_lowercase().replace('ё', "е");
             let is_notice_heading = normalized == "традиционные технические предуведомления:";
             if is_notice_heading && line.left >= base_left + 5.0 {
@@ -864,6 +954,7 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
             }
             previous_line = Some(line);
         }
+        previous_page_last = page_last;
     }
     if !paragraph.is_empty() {
         blocks.push(("p".to_owned(), paragraph, paragraph_quote));
@@ -915,6 +1006,7 @@ mod tests {
         StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
         is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
         push_styled_char, strip_page_label, strip_sponsr_branding, strip_sponsr_preamble,
+        pages_to_text, push_styled_char, strip_page_label, strip_sponsr_preamble,
         text_to_safe_html,
     };
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
@@ -1294,6 +1386,41 @@ mod tests {
         assert!(
             html.ends_with("<p>Обычный текст после предуведомления.</p>"),
             "{html}"
+        );
+    }
+
+    #[test]
+    fn joins_a_prose_paragraph_continuing_across_pages() {
+        let pages = vec![
+            vec![line(
+                "Вот такой-то псих с накаченной на него поверх системой ложных представлений о себе — это третий вариант",
+                12.0,
+            )],
+            vec![line(
+                "возможного гражданина вашей утопии. Или антиутопии, или хрен вас знает, сами разбирайтесь.",
+                12.0,
+            )],
+        ];
+        let expected = "Вот такой-то псих с накаченной на него поверх системой ложных представлений о себе — это третий вариант возможного гражданина вашей утопии. Или антиутопии, или хрен вас знает, сами разбирайтесь.";
+
+        assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
+        assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn preserves_a_real_paragraph_boundary_across_pages() {
+        let pages = vec![
+            vec![line("Первый абзац полностью завершен.", 12.0)],
+            vec![line("Следующий абзац начинается здесь.", 12.0)],
+        ];
+
+        assert_eq!(
+            normalize_text(&pages_to_text(&pages)),
+            "Первый абзац полностью завершен.\n\nСледующий абзац начинается здесь."
+        );
+        assert_eq!(
+            lines_to_html(&pages),
+            "<p>Первый абзац полностью завершен.</p>\n<p>Следующий абзац начинается здесь.</p>"
         );
     }
 
