@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import App from "./App"
 
 const sampleFeed = {
@@ -55,6 +55,7 @@ function installApi(initiallySignedIn = false, overviewResponse: () => Promise<R
 }
 
 describe("operator session and dashboard shell", () => {
+  beforeEach(() => localStorage.clear())
   it("restores a signed-in session and displays the workspace", async () => {
     installApi(true)
 
@@ -108,7 +109,7 @@ describe("operator session and dashboard shell", () => {
     await user.click(within(nav).getByRole("button", { name: /Feeds/ }))
     expect(await screen.findByRole("heading", { name: "Feeds" })).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /PDF review/ }))
-    await waitFor(() => expect(window.location.pathname).toMatch(/^\/pdf-review/))
+    await waitFor(() => expect(window.location.pathname).toMatch(/^\/manage\/pdf-review/))
     await screen.findByText("Ada Lovelace · 2026 · November")
 
     await user.click(screen.getByRole("button", { name: /Sign out/ }))
@@ -118,31 +119,31 @@ describe("operator session and dashboard shell", () => {
 
   it("opens a selected feed and PDF review month directly from their URLs", async () => {
     installApi(true)
-    window.history.replaceState({}, "", "/feeds/feed-1")
+    window.history.replaceState({}, "", "/manage/feeds/feed-1")
 
     const { unmount } = render(<App />)
     expect(await screen.findByRole("region", { name: "Feed details" })).toBeInTheDocument()
-    expect(window.location.pathname).toBe("/feeds/feed-1")
+    expect(window.location.pathname).toBe("/manage/feeds/feed-1")
 
     unmount()
-    window.history.replaceState({}, "", "/pdf-review/feed-1/2026/month-1")
+    window.history.replaceState({}, "", "/manage/pdf-review/feed-1/2026/month-1")
     render(<App />)
 
     expect(await screen.findByRole("heading", { name: "PDF review" })).toBeInTheDocument()
     expect(await screen.findByText("Ada Lovelace · 2026 · November")).toBeInTheDocument()
-    expect(window.location.pathname).toBe("/pdf-review/feed-1/2026/month-1")
+    expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1")
   })
 
   it("returns from PDF review to the selected feed", async () => {
     installApi(true)
-    window.history.replaceState({}, "", "/pdf-review/feed-1/2026/month-1")
+    window.history.replaceState({}, "", "/manage/pdf-review/feed-1/2026/month-1")
     const user = userEvent.setup()
     render(<App />)
 
     await screen.findByText("Ada Lovelace · 2026 · November")
     await user.click(screen.getByRole("button", { name: "Back to feeds" }))
 
-    expect(window.location.pathname).toBe("/feeds/feed-1")
+    expect(window.location.pathname).toBe("/manage/feeds/feed-1")
     expect(await screen.findByRole("region", { name: "Feed details" })).toBeInTheDocument()
   })
 
@@ -154,22 +155,22 @@ describe("operator session and dashboard shell", () => {
     await screen.findByRole("heading", { name: "Overview" })
     const nav = screen.getByRole("navigation", { name: "Primary navigation" })
     await user.click(within(nav).getByRole("button", { name: /Feeds/ }))
-    expect(window.location.pathname).toBe("/feeds")
+    expect(window.location.pathname).toBe("/manage/feeds")
     await user.click(await screen.findByRole("button", { name: /Ada Lovelace/ }))
-    expect(window.location.pathname).toBe("/feeds/feed-1")
+    expect(window.location.pathname).toBe("/manage/feeds/feed-1")
     await user.click(screen.getAllByRole("link", { name: "Kpapers overview" })[0])
-    expect(window.location.pathname).toBe("/")
+    expect(window.location.pathname).toBe("/manage/")
     window.history.back()
-    await waitFor(() => expect(window.location.pathname).toBe("/feeds/feed-1"))
+    await waitFor(() => expect(window.location.pathname).toBe("/manage/feeds/feed-1"))
   })
 
   it("recovers to the review chooser when a bookmarked month is no longer available", async () => {
     installApi(true)
-    window.history.replaceState({}, "", "/pdf-review/feed-1/2026/removed-month")
+    window.history.replaceState({}, "", "/manage/pdf-review/feed-1/2026/removed-month")
     render(<App />)
 
     await screen.findByRole("heading", { name: "PDF review" })
-    await waitFor(() => expect(window.location.pathname).toBe("/pdf-review"))
+    await waitFor(() => expect(window.location.pathname).toBe("/manage/pdf-review"))
     expect(await screen.findByText("The requested review month is no longer available.")).toBeInTheDocument()
   })
 
@@ -181,7 +182,9 @@ describe("operator session and dashboard shell", () => {
     await screen.findByRole("heading", { name: "Overview" })
     const nav = screen.getByRole("navigation", { name: "Primary navigation" })
     await user.click(within(nav).getByRole("button", { name: /PDF review/ }))
-    await screen.findByRole("combobox", { name: "Month" })
+    await screen.findByText("Ada Lovelace · 2026 · November")
+    await waitFor(() => expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1"))
+    await screen.findByText("No PDFs found")
     await user.selectOptions(screen.getByRole("combobox", { name: "Feed" }), "feed-2")
 
     await waitFor(() => {
@@ -189,7 +192,7 @@ describe("operator session and dashboard shell", () => {
       expect(screen.getByRole("combobox", { name: "Year" })).toHaveValue("2025")
       expect(screen.getByRole("combobox", { name: "Month" })).toHaveValue("month-2")
     })
-    await waitFor(() => expect(window.location.pathname).toBe("/pdf-review/feed-2/2025/month-2"))
+    await waitFor(() => expect(window.location.pathname).toBe("/manage/pdf-review/feed-2/2025/month-2"))
   })
 
   it("persists the collapsible desktop sidebar state across reloads", async () => {
@@ -244,4 +247,67 @@ describe("operator session and dashboard shell", () => {
       expect(screen.getByTestId("needs-review-count")).toHaveTextContent("Unavailable")
     })
   })
+
+  it.each(["/", "/manage", "/manage/"])("normalizes the Overview entry %s", async (path) => {
+    installApi(true)
+    window.history.replaceState({}, "", path)
+    render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+    expect(window.location.pathname).toBe("/manage/")
+  })
+
+  it.each(["/manage/pdf-review/feed-1", "/manage/pdf-review/feed-1/2026"])("restores partial review selection %s", async (path) => {
+    installApi(true)
+    window.history.replaceState({}, "", path)
+    render(<App />)
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Feed" })).toHaveValue("feed-1"))
+    expect(await screen.findByText("Ada Lovelace · 2026 · November")).toBeInTheDocument()
+  })
+
+  it("recovers from a missing feed and an unknown dashboard path", async () => {
+    installApi(true)
+    window.history.replaceState({}, "", "/manage/feeds/missing")
+    const first = render(<App />)
+    await screen.findByText("That feed is no longer available.")
+    expect(window.location.pathname).toBe("/manage/feeds")
+    first.unmount()
+    window.history.replaceState({}, "", "/manage/unknown")
+    render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+    expect(window.location.pathname).toBe("/manage/")
+  })
+
+  it("opens protected creation after sign-in without treating new as a feed ID", async () => {
+    installApi(false)
+    window.history.replaceState({}, "", "/manage/feeds/new")
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByLabelText("Username")
+    expect(screen.queryByLabelText("Author name")).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText("Username"), "operator")
+    await user.type(screen.getByLabelText("Password"), "correct horse")
+    await user.click(screen.getByRole("button", { name: "Sign in" }))
+    expect(await screen.findByRole("heading", { name: "Create a feed" })).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/manage/feeds/new")
+    expect(screen.getByRole("button", { name: /Feeds —/ })).toHaveAttribute("aria-current", "page")
+    expect(screen.queryByText("That feed is no longer available.")).not.toBeInTheDocument()
+  })
+
+  it("opens creation from Overview, cancels without a POST, and restores it with history", async () => {
+    const fetchMock = installApi(true)
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole("button", { name: "Create feed" }))
+    await screen.findByLabelText("Author name")
+    expect(window.location.pathname).toBe("/manage/feeds/new")
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+    await screen.findByRole("heading", { name: "Feeds" })
+    expect(screen.queryByLabelText("Author name")).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false)
+    window.history.back()
+    await screen.findByRole("heading", { name: "Create a feed" })
+    window.history.forward()
+    await screen.findByRole("heading", { name: "Feeds" })
+  })
+
 })

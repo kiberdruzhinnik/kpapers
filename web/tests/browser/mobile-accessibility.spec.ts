@@ -19,6 +19,8 @@ test("phone layout keeps navigation, management validation, and keyboard sign-in
   await expect(page.getByRole("heading", { name: "Feeds" })).toBeVisible()
   await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeHidden()
 
+  await page.getByRole("button", { name: "Create feed" }).click()
+  await expect(page).toHaveURL(/\/manage\/feeds\/new$/)
   await page.getByLabel("Author name").fill("Mobile validation feed")
   await page.getByLabel("Refresh interval (optional)").fill("0")
   await page.getByRole("button", { name: "Create feed" }).click()

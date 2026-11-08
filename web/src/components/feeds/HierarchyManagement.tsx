@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
-import { Archive, CalendarDays, CheckCircle2, Clock3, FileSearch, FolderPlus, RefreshCw, RotateCcw, Trash2 } from "lucide-react"
+import { Archive, CalendarDays, ChevronDown, CheckCircle2, Clock3, FileSearch, FolderPlus, RefreshCw, RotateCcw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Month, type Year } from "@/lib/api"
+import { formatLocalTimestamp } from "@/lib/datetime"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -127,8 +128,8 @@ function MonthCard({ month, year, onChanged, onReview }: {
         </div>
 
         <section aria-label={`${monthName} refresh status`} className="grid min-w-0 gap-3 rounded-lg bg-muted/45 p-3 sm:grid-cols-3">
-          <div className="min-w-0"><p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Clock3 aria-hidden="true" className="size-3" />Last attempt</p><p className="mt-1 break-words text-xs">{month.last_attempt_at ?? "Never"}</p></div>
-          <div className="min-w-0"><p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><CalendarDays aria-hidden="true" className="size-3" />Next refresh</p><p className="mt-1 break-words text-xs">{month.next_refresh_at ?? "Pending"}</p></div>
+          <div className="min-w-0"><p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Clock3 aria-hidden="true" className="size-3" />Last attempt</p><p className="mt-1 break-words text-xs">{formatLocalTimestamp(month.last_attempt_at, "Never")}</p></div>
+          <div className="min-w-0"><p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><CalendarDays aria-hidden="true" className="size-3" />Next refresh</p><p className="mt-1 break-words text-xs">{formatLocalTimestamp(month.next_refresh_at, "Pending")}</p></div>
           <div className="min-w-0"><p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><CheckCircle2 aria-hidden="true" className="size-3" />Latest result</p><p className="mt-1 break-words text-xs">{month.last_error ? `Failed · ${month.last_error}` : month.last_result ?? "Not run yet"}</p></div>
         </section>
 
@@ -154,6 +155,17 @@ function YearCard({ year, feedId, onChanged, onReview }: {
   onChanged: () => Promise<void>
   onReview: (month: Month) => void
 }) {
+  const storageKey = `kpapers.year.expanded.v1.${feedId}.${year.year}`
+  const [expanded, setExpanded] = useState(() => {
+    try { return window.localStorage.getItem(storageKey) === "expanded" } catch { return false }
+  })
+  const regionId = `year-content-${feedId}-${year.year}`
+
+  function toggleExpanded() {
+    const next = !expanded
+    setExpanded(next)
+    try { window.localStorage.setItem(storageKey, next ? "expanded" : "collapsed") } catch { /* Keep toggling usable when storage is blocked. */ }
+  }
   const [months, setMonths] = useState<Month[]>([])
   const [loading, setLoading] = useState(true)
   const [formError, setFormError] = useState<string | null>(null)
@@ -230,13 +242,14 @@ function YearCard({ year, feedId, onChanged, onReview }: {
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-4">
         <div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"><CalendarDays aria-hidden="true" className="size-4" /></div><div><div className="flex items-center gap-2"><CardTitle className="text-base">{year.year}</CardTitle><Badge variant={year.active ? "secondary" : "outline"}>{year.active ? "Active" : "Archived"}</Badge></div><CardDescription className="mt-0.5">{months.length} configured {months.length === 1 ? "month" : "months"}</CardDescription></div></div>
         <div className="flex flex-wrap gap-2">
+          <Button aria-controls={regionId} aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${year.year}`} onClick={toggleExpanded} size="sm" variant="outline"><ChevronDown aria-hidden="true" className={expanded ? "size-4" : "size-4 -rotate-90"} />{expanded ? "Collapse" : "Expand"}</Button>
           {year.active
             ? <><Button onClick={() => void refreshYear()} size="sm" variant="outline"><RefreshCw aria-hidden="true" />Refresh year</Button><Button onClick={requestArchive} size="sm" variant="ghost"><Archive aria-hidden="true" />Archive</Button></>
             : <Button onClick={() => void restoreYear()} size="sm" variant="outline"><RotateCcw aria-hidden="true" />Restore year</Button>}
           <Button aria-label={`Delete ${year.year} permanently`} onClick={requestDelete} size="sm" variant="ghost"><Trash2 aria-hidden="true" className="text-destructive" /><span className="text-destructive">Delete</span></Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="space-y-5" hidden={!expanded} id={regionId}>
         <section aria-label={`Link a month in ${year.year}`} className="rounded-xl border bg-muted/20 p-4">
           <div className="mb-3 flex items-start gap-2.5"><div className="mt-0.5 flex size-7 items-center justify-center rounded-lg bg-background text-muted-foreground"><FolderPlus aria-hidden="true" className="size-3.5" /></div><div><h3 className="text-sm font-medium">Link a month</h3><p className="mt-0.5 text-xs text-muted-foreground">Add a public cloud folder when it contains PDF issues.</p></div></div>
           <form className="grid min-w-0 items-end gap-3 md:grid-cols-[minmax(140px,0.75fr)_minmax(220px,2fr)_auto]" onSubmit={(event) => void createMonth(event)}>
@@ -312,7 +325,7 @@ export function HierarchyManagement({ feedId, active, onReviewMonth }: {
         </CardContent>
       </Card>
       <div className="space-y-4">
-        {years.map((year) => <YearCard key={year.year} feedId={feedId} onChanged={reloadYears} onReview={onReviewMonth} year={year} />)}
+        {years.map((year) => <YearCard key={`${feedId}-${year.year}`} feedId={feedId} onChanged={reloadYears} onReview={onReviewMonth} year={year} />)}
         {years.length === 0 && !loading && <div className="rounded-xl border border-dashed bg-background px-6 py-10 text-center"><div className="mx-auto mb-3 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><CalendarDays aria-hidden="true" className="size-4" /></div><p className="text-sm font-medium">No years configured</p><p className="mt-1 text-sm text-muted-foreground">Add a year to start linking source folders.</p></div>}
         {loading && <div aria-label="Loading years" className="rounded-xl border bg-background px-6 py-8 text-center text-sm text-muted-foreground">Loading years…</div>}
       </div>
