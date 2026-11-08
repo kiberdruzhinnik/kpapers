@@ -1,0 +1,60 @@
+name: Scheduled fuzzing
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds to fuzz each target
+        required: true
+        default: "1800"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Extended parser and PDF fuzz run
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up nightly Rust with fuzz components
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the pinned Pdfium runtime
+        run: |
+          docker build --target pdfium --tag kpapers-pdfium:fuzz --file Dockerfile.api .
+          container="$(docker create kpapers-pdfium:fuzz)"
+          mkdir -p "$RUNNER_TEMP/pdfium"
+          docker cp "$container:/usr/local/lib/libpdfium.so" "$RUNNER_TEMP/pdfium/libpdfium.so"
+          docker rm "$container"
+
+      - name: Fuzz each target
+        run: ./scripts/fuzz-smoke.sh
+        env:
+          PDFIUM_LIB_DIR: ${{ runner.temp }}/pdfium
+          FUZZ_SMOKE_SECONDS: ${{ inputs.duration_seconds || '1800' }}
+          FUZZ_OUTPUT_DIR: ${{ runner.temp }}/fuzz-data
+          FUZZ_PRESERVE_OUTPUTS: "true"
+
+      - name: Upload corpus and crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-fuzz-data
+          path: ${{ runner.temp }}/fuzz-data
+          if-no-files-found: warn
+          retention-days: 30

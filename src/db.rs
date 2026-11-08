@@ -1,4 +1,4 @@
-use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::str::FromStr;
 
 pub async fn connect_and_migrate(database_url: &str) -> Result<SqlitePool, sqlx::Error> {

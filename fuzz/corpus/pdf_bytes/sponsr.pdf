@@ -1,0 +1,126 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R /F4 8 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 1099 >>
+stream
+BT 1 0 0 1 50 740 Tm /F1 12 Tf <31> Tj 1 0 0 1 50 724 Tm /F2 24 Tf <73706f6e7372> Tj 1 0 0 1 50 708 Tm /F1 12 Tf <4372696d736f6e416c746572209620416e616c7974696373> Tj 1 0 0 1 50 692 Tm /F1 10 Tf <323720f4e5e2f02031313a3434> Tj 1 0 0 1 50 676 Tm /F1 10 Tf <353820ece8edf3f2> Tj 1 0 0 1 50 660 Tm 1 0 0 1 50 644 Tm /F1 16 Tf <2a2afdf2ee20ede520e8ede2e5f1f2e8f6e8eeededfbe520f0e5eaeeece5ede4e0f6e8e82a2a> Tj 1 0 0 1 50 628 Tm 1 0 0 1 50 612 Tm /F1 16 Tf <d1f0e0e7f320ea20e4e5ebf32c20eaeeebebe5e3e82e> Tj 1 0 0 1 50 596 Tm 1 0 0 1 70 580 Tm /F1 16 Tf <d2f0e0e4e8f6e8eeededfbe520f2e5f5ede8f7e5f1eae8e520eff0e5e4f3e2e5e4eeecebe5ede8ff3a> Tj 1 0 0 1 50 564 Tm 1 0 0 1 70 548 Tm /F1 16 Tf <c4ebff20edeee2fbf520f7e8f2e0f2e5ebe5e93a20ede0f7e8ede0e9f2e520f120fdf2eee3ee20f2e5eaf1f2e02e> Tj 1 0 0 1 50 532 Tm 1 0 0 1 70 516 Tm /F1 16 Tf <cff0eee4eeebe6e5ede8e520f2e5f5ede8f7e5f1eaeee3ee20eff0e5e4f3e2e5e4eeecebe5ede8ff2e> Tj 1 0 0 1 50 500 Tm 1 0 0 1 50 484 Tm /F1 16 Tf <cde020e4e0ededeeec20eff0eee5eaf2e520efe5f0e8eee4e8f7e5f1eae820f3efeeece8ede0e5f2f1ff20f2e5f0ece8ed20abf1f2e0f0fbe520e4e5edfce3e8bb2e> Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 9 0 R >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding /ToUnicode 9 0 R >>
+endobj
+7 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding /ToUnicode 9 0 R >>
+endobj
+8 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-BoldOblique /Encoding /WinAnsiEncoding /ToUnicode 9 0 R >>
+endobj
+9 0 obj
+<< /Length 1052 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+61 beginbfchar
+<20> <0020>
+<2A> <002A>
+<2C> <002C>
+<2E> <002E>
+<31> <0031>
+<32> <0032>
+<34> <0034>
+<35> <0035>
+<37> <0037>
+<38> <0038>
+<3A> <003A>
+<41> <0041>
+<43> <0043>
+<61> <0061>
+<63> <0063>
+<65> <0065>
+<69> <0069>
+<6C> <006C>
+<6D> <006D>
+<6E> <006E>
+<6F> <006F>
+<70> <0070>
+<72> <0072>
+<73> <0073>
+<74> <0074>
+<79> <0079>
+<96> <2013>
+<AB> <00AB>
+<BB> <00BB>
+<C4> <0414>
+<CD> <041D>
+<CF> <041F>
+<D1> <0421>
+<D2> <0422>
+<E0> <0430>
+<E2> <0432>
+<E3> <0433>
+<E4> <0434>
+<E5> <0435>
+<E6> <0436>
+<E7> <0437>
+<E8> <0438>
+<E9> <0439>
+<EA> <043A>
+<EB> <043B>
+<EC> <043C>
+<ED> <043D>
+<EE> <043E>
+<EF> <043F>
+<F0> <0440>
+<F1> <0441>
+<F2> <0442>
+<F3> <0443>
+<F4> <0444>
+<F5> <0445>
+<F6> <0446>
+<F7> <0447>
+<FB> <044B>
+<FC> <044C>
+<FD> <044D>
+<FF> <044F>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000271 00000 n 
+0000001422 00000 n 
+0000001536 00000 n 
+0000001655 00000 n 
+0000001777 00000 n 
+0000001903 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+3007
+%%EOF

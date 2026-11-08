@@ -23,6 +23,21 @@ pub struct FeedInput {
     pub refresh_interval_seconds: Option<i64>,
 }
 
+fn valid_feed_input(input: &FeedInput) -> bool {
+    !input.display_name.trim().is_empty()
+        && input
+            .refresh_interval_seconds
+            .is_none_or(|seconds| seconds > 0)
+}
+
+fn valid_year(year: i64) -> bool {
+    (1..=9999).contains(&year)
+}
+
+fn valid_month(month: i64) -> bool {
+    (1..=12).contains(&month)
+}
+
 #[derive(Serialize, sqlx::FromRow)]
 pub struct Year {
     pub feed_id: String,
@@ -273,7 +288,7 @@ pub async fn create_year(
     State(pool): State<SqlitePool>,
     Json(input): Json<YearInput>,
 ) -> Result<(StatusCode, Json<Year>), StatusCode> {
-    if !(1..=9999).contains(&input.year) {
+    if !valid_year(input.year) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let result = sqlx::query("INSERT INTO feed_years (feed_id, year) SELECT id, ? FROM feeds WHERE id = ? AND active = 1")
@@ -301,7 +316,7 @@ pub async fn create_month(
     State(pool): State<SqlitePool>,
     Json(input): Json<MonthInput>,
 ) -> Result<(StatusCode, Json<Month>), StatusCode> {
-    if !(1..=12).contains(&month) {
+    if !valid_month(month) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let provider = crate::providers::validate_source_url(&input.source_url)
@@ -349,9 +364,7 @@ pub async fn create(
     State(pool): State<SqlitePool>,
     Json(input): Json<FeedInput>,
 ) -> Result<(StatusCode, Json<Feed>), StatusCode> {
-    if input.display_name.trim().is_empty()
-        || input.refresh_interval_seconds.is_some_and(|v| v <= 0)
-    {
+    if !valid_feed_input(&input) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -368,9 +381,7 @@ pub async fn update(
     State(pool): State<SqlitePool>,
     Json(input): Json<FeedInput>,
 ) -> Result<Json<Feed>, StatusCode> {
-    if input.display_name.trim().is_empty()
-        || input.refresh_interval_seconds.is_some_and(|v| v <= 0)
-    {
+    if !valid_feed_input(&input) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let result = sqlx::query("UPDATE feeds SET display_name = ?, description = ?, refresh_interval_seconds = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND active = 1")
@@ -506,5 +517,206 @@ async fn delete_scope(pool: &SqlitePool, query: &str, values: Vec<String>) -> St
         Ok(result) if result.rows_affected() > 0 => StatusCode::NO_CONTENT,
         Ok(_) => StatusCode::NOT_FOUND,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feed_input_requires_a_nonblank_name_and_positive_interval() {
+        let input = |display_name: &str, refresh_interval_seconds| FeedInput {
+            display_name: display_name.into(),
+            description: String::new(),
+            refresh_interval_seconds,
+        };
+        assert!(valid_feed_input(&input(" Ada ", None)));
+        assert!(valid_feed_input(&input("Ada", Some(1))));
+        assert!(!valid_feed_input(&input(" \t\n ", None)));
+        assert!(!valid_feed_input(&input("Ada", Some(0))));
+        assert!(!valid_feed_input(&input("Ada", Some(-1))));
+    }
+
+    #[test]
+    fn hierarchy_input_accepts_only_supported_calendar_ranges() {
+        for year in [1, 2026, 9999] {
+            assert!(valid_year(year));
+        }
+        for year in [i64::MIN, 0, 10000, i64::MAX] {
+            assert!(!valid_year(year));
+        }
+        for month in [1, 6, 12] {
+            assert!(valid_month(month));
+        }
+        for month in [i64::MIN, 0, 13, i64::MAX] {
+            assert!(!valid_month(month));
+        }
+    }
+
+    #[tokio::test]
+    async fn management_lifecycle_persists_updates_and_cascades_deletions() {
+        let (pool, path) = crate::test_support::database().await;
+        let state = || State(pool.clone());
+        let (status, Json(feed)) = create(
+            state(),
+            Json(FeedInput {
+                display_name: "  Test feed  ".into(),
+                description: "  description  ".into(),
+                refresh_interval_seconds: Some(1800),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(feed.display_name, "Test feed");
+        assert_eq!(feed.description, "description");
+
+        let (_, Json(year)) = create_year(
+            Path(feed.id.clone()),
+            state(),
+            Json(YearInput { year: 2026 }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(year.year, 2026);
+
+        let (month_status, Json(month)) = create_month(
+            Path((feed.id.clone(), 2026, 11)),
+            state(),
+            Json(MonthInput {
+                source_url: "https://disk.yandex.ru/d/test-token".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(month_status, StatusCode::CREATED);
+        assert_eq!(month.provider, "yandex_disk");
+
+        let duplicate_month = create_month(
+            Path((feed.id.clone(), 2026, 11)),
+            state(),
+            Json(MonthInput {
+                source_url: "https://disk.yandex.ru/d/test-token".into(),
+            }),
+        )
+        .await;
+        assert!(matches!(duplicate_month, Err(StatusCode::CONFLICT)));
+
+        sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes) VALUES ('doc-1', ?, '/article.pdf', 'article.pdf', 'https://disk.yandex.ru/file.pdf', 'fp-1', 10)")
+            .bind(&month.id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES ('doc-1', 'fp-1', 'text', 'text', '<p>text</p>', 1)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO refresh_jobs (id, scope, feed_id, year, month_id, force, status) VALUES ('job-1', 'month', ?, 2026, ?, 0, 'queued')")
+            .bind(&feed.id).bind(&month.id).execute(&pool).await.unwrap();
+
+        assert_eq!(
+            set_promotion_override(
+                Path("doc-1".into()),
+                state(),
+                Json(PromotionOverride {
+                    override_value: Some("include".into())
+                }),
+            )
+            .await
+            .unwrap(),
+            StatusCode::NO_CONTENT,
+        );
+        let override_value: Option<String> = sqlx::query_scalar(
+            "SELECT promotional_override FROM source_documents WHERE id='doc-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(override_value.as_deref(), Some("include"));
+        assert_eq!(
+            set_promotion_override(
+                Path("doc-1".into()),
+                state(),
+                Json(PromotionOverride {
+                    override_value: Some("invalid".into())
+                }),
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::BAD_REQUEST,
+        );
+        assert_eq!(
+            set_promotion_override(
+                Path("missing".into()),
+                state(),
+                Json(PromotionOverride {
+                    override_value: None
+                }),
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::NOT_FOUND,
+        );
+
+        assert_eq!(
+            archive_month(Path(month.id.clone()), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        let active: i64 = sqlx::query_scalar("SELECT active FROM feed_months WHERE id=?")
+            .bind(&month.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(active, 0);
+        assert_eq!(
+            restore_month(Path(month.id.clone()), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            archive_year(Path((feed.id.clone(), 2026)), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            restore_year(Path((feed.id.clone(), 2026)), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            archive_feed(Path(feed.id.clone()), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            restore_feed(Path(feed.id.clone()), state()).await,
+            StatusCode::NO_CONTENT
+        );
+
+        assert_eq!(
+            permanently_delete_month(Path(month.id), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        let documents: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM source_documents WHERE id='doc-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM cached_content WHERE document_id='doc-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refresh_jobs WHERE id='job-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((documents, cached, jobs), (0, 0, 0));
+        assert_eq!(
+            permanently_delete_year(Path((feed.id.clone(), 2026)), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            permanently_delete_feed(Path(feed.id.clone()), state()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            permanently_delete_feed(Path(feed.id), state()).await,
+            StatusCode::NOT_FOUND
+        );
+
+        crate::test_support::cleanup(pool, path).await;
     }
 }

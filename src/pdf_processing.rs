@@ -229,7 +229,9 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
         blocks = vec![];
     }
     let recovered_title_block = blocks.first().is_some_and(|block| {
-        strip_html_tags(block).trim_start().starts_with("[Философское]")
+        strip_html_tags(block)
+            .trim_start()
+            .starts_with("[Философское]")
     });
     if recovered_title_block {
         blocks.remove(0);
@@ -294,8 +296,14 @@ fn strip_html_tags(text: &str) -> String {
     let mut inside_tag = false;
     text.chars()
         .filter_map(|ch| match ch {
-            '<' => { inside_tag = true; None }
-            '>' => { inside_tag = false; None }
+            '<' => {
+                inside_tag = true;
+                None
+            }
+            '>' => {
+                inside_tag = false;
+                None
+            }
             _ if inside_tag => None,
             _ => Some(ch),
         })
@@ -889,10 +897,11 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        StyledLine, StyledRun, cache_fingerprint, is_skladchik_promotion,
+        StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
         is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
         push_styled_char, strip_page_label, strip_sponsr_preamble, text_to_safe_html,
     };
+    use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
 
@@ -1009,6 +1018,45 @@ mod tests {
     }
 
     #[test]
+    fn generated_text_keeps_normalization_and_safe_html_invariants() {
+        let mut rng = StdRng::seed_from_u64(0x4b50_4150_4552_53);
+        for _ in 0..512 {
+            let mut bytes = vec![0; rng.gen_range(0..512)];
+            rng.fill_bytes(&mut bytes);
+            let raw = String::from_utf8_lossy(&bytes);
+            let normalized = normalize_text(&raw);
+
+            assert_eq!(normalize_text(&normalized), normalized);
+            assert!(!normalized.contains('\0'));
+            assert!(!normalized.contains('\u{fffd}'));
+
+            let html = text_to_safe_html(&normalized);
+            for fragment in html.split('<').skip(1) {
+                let (tag, _) = fragment.split_once('>').expect("well-formed generated tag");
+                assert!(matches!(tag, "p" | "/p"), "unexpected tag <{tag}>");
+            }
+            assert!(!html.contains("<script"));
+            assert!(!html.contains("<img"));
+            assert!(matches!(
+                super::classify_promotion(&raw, &normalized),
+                "publish" | "promotional"
+            ));
+        }
+    }
+
+    #[test]
+    fn pdf_entry_point_rejects_non_pdf_and_oversized_data_before_loading_pdfium() {
+        assert!(matches!(
+            extract_pdf(b"not a pdf", 1024),
+            Err(error) if error == "source is not a PDF file"
+        ));
+        assert!(matches!(
+            extract_pdf(b"%PDF-too-large", 4),
+            Err(error) if error == "PDF exceeds configured size limit"
+        ));
+    }
+
+    #[test]
     fn restores_sponsr_heading_and_removes_publication_metadata_from_document_name() {
         let mut extracted = super::ExtractedText {
             full_text: "27 февр 11:44 58 минут Сразу к делу, коллеги.".into(),
@@ -1047,11 +1095,27 @@ mod tests {
             &mut extracted,
         );
         assert!(extracted.html.starts_with("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>"));
-        assert!(extracted.html.contains("<p><strong>это не инвестиционные рекомендации</strong></p>"));
+        assert!(
+            extracted
+                .html
+                .contains("<p><strong>это не инвестиционные рекомендации</strong></p>")
+        );
         assert!(extracted.html.contains("<p>Сразу к делу, коллеги.</p>"));
-        assert!(extracted.html.contains("<h2><strong>Раздел статьи</strong></h2>"));
-        assert!(extracted.html.contains("<blockquote><p>Традиционные технические предуведомления:</p></blockquote>"));
-        assert!(extracted.html.ends_with("<p>Обычный текст после цитаты.</p>"));
+        assert!(
+            extracted
+                .html
+                .contains("<h2><strong>Раздел статьи</strong></h2>")
+        );
+        assert!(
+            extracted.html.contains(
+                "<blockquote><p>Традиционные технические предуведомления:</p></blockquote>"
+            )
+        );
+        assert!(
+            extracted
+                .html
+                .ends_with("<p>Обычный текст после цитаты.</p>")
+        );
         assert!(!extracted.html.contains("27 февр 11:44"));
     }
 

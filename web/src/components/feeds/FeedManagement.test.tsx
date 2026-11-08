@@ -212,6 +212,22 @@ describe("feed management workflows", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Refresh interval must be greater than zero hours.")
   })
 
+  it("blocks refresh intervals above the supported form maximum", async () => {
+    const fetchMock = installFeedApi()
+    const user = userEvent.setup()
+    render(<App />)
+    await openFeeds(user)
+
+    const interval = screen.getByLabelText(/Refresh interval/) as HTMLInputElement
+    await user.type(screen.getByLabelText("Author name"), "Katherine Johnson")
+    await user.type(interval, "87601")
+    expect(interval.validity.rangeOverflow).toBe(true)
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
+
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/management/feeds", expect.objectContaining({ method: "POST" }))
+    expect(screen.queryByRole("heading", { name: "Katherine Johnson" })).not.toBeInTheDocument()
+  })
+
   it("edits feed details, keeps the stable address, and requires confirmation before archiving and deletion", async () => {
     const fetchMock = installFeedApi([feed])
     const user = userEvent.setup()

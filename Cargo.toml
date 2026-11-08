@@ -20,3 +20,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread"] }
 sqlx = { version = "0.8", features = ["macros", "migrate", "runtime-tokio-rustls", "sqlite"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

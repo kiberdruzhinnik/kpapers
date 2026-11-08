@@ -882,6 +882,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
+ "tower",
  "url",
  "uuid",
 ]

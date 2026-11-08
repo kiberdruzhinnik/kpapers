@@ -46,4 +46,13 @@ describe("management API request", () => {
       status: 0, message: "Unable to reach Kpapers. Check your connection and try again.",
     })
   })
+
+  it("surfaces malformed successful JSON responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{bad json", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })))
+
+    await expect(request("/malformed-response")).rejects.toBeInstanceOf(SyntaxError)
+  })
 })
