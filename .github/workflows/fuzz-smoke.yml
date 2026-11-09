@@ -26,9 +26,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up nightly Rust with fuzz components
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-11-08
           components: llvm-tools-preview
+
+      - name: Cache fuzz build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+          cache-workspace-crates: true
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
@@ -48,6 +55,7 @@ jobs:
         run: ./scripts/fuzz-smoke.sh
         env:
           PDFIUM_LIB_DIR: ${{ runner.temp }}/pdfium
+          FUZZ_RUST_TOOLCHAIN: nightly-2026-11-08
           FUZZ_SMOKE_SECONDS: ${{ github.event_name == 'pull_request' && '15' || inputs.duration_seconds || '1800' }}
           FUZZ_OUTPUT_DIR: ${{ runner.temp }}/fuzz-data
           FUZZ_PRESERVE_OUTPUTS: ${{ github.event_name != 'pull_request' }}

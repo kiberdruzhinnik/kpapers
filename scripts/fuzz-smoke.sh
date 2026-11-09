@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SECONDS_PER_TARGET="${FUZZ_SMOKE_SECONDS:-10}"
+FUZZ_RUST_TOOLCHAIN="${FUZZ_RUST_TOOLCHAIN:-nightly-2026-11-08}"
 PDFIUM_LIB_DIR="${PDFIUM_LIB_DIR:-/usr/local/lib}"
 WORK="$(mktemp -d)"
 OUTPUT_DIR="${FUZZ_OUTPUT_DIR:-}"
@@ -33,7 +34,7 @@ for target in pdf_bytes untrusted_inputs; do
   max_len=4096
   [[ "$target" != pdf_bytes ]] || max_len=2097153
   echo "Fuzzing $target for ${SECONDS_PER_TARGET}s (max input ${max_len} bytes)"
-  cargo +nightly fuzz run "$target" "$corpus" -- \
+  cargo "+$FUZZ_RUST_TOOLCHAIN" fuzz run "$target" "$corpus" -- \
     -max_len="$max_len" -timeout=5 -rss_limit_mb=1024 \
     -max_total_time="$SECONDS_PER_TARGET" -artifact_prefix="$artifacts/"
 done
