@@ -88,3 +88,33 @@ describe("PDF review", () => {
     expect(screen.getByText("Grace Hopper · 2025 · December")).toBeInTheDocument()
   })
 })
+
+describe("classification and extraction presentation", () => {
+  it("keeps automatic classification visible independently of the saved override", async () => {
+    installDocumentsApi()
+    const user = userEvent.setup()
+    renderReview()
+    const decision = await screen.findByRole("combobox", { name: "Publication decision for research-paper.pdf" })
+    await user.selectOptions(decision, "exclude")
+    await waitFor(() => expect(decision).toHaveValue("exclude"))
+    expect(screen.getByText("Suitable for publication", { selector: "[data-slot=badge]" })).toBeInTheDocument()
+  })
+
+  it("explains extraction eligibility and retries a failed PDF", async () => {
+    const fetchMock = installDocumentsApi()
+    const original = fetchMock.getMockImplementation()!
+    let extracted = false
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === "/api/management/months/month-1/documents") return response([{ ...document, extraction_status: extracted ? "success" : "failure", last_error: extracted ? null : "Extraction failed" }])
+      if (String(input) === "/api/management/documents/doc-1/extract?force=true" && init?.method === "POST") { extracted = true; return response(null, 204) }
+      return original(input, init)
+    })
+    const user = userEvent.setup()
+    renderReview()
+    await screen.findByText("Extraction failure")
+    expect(screen.getByText(/Successful extraction is required/)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Retry extraction" }))
+    await screen.findByText("Extraction success")
+    expect(screen.queryByText(/Successful extraction is required/)).not.toBeInTheDocument()
+  })
+})

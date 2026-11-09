@@ -24,6 +24,7 @@ for (const scenario of cases) {
       })
       await page.goto("/manage/feeds/timezone-feed")
       await page.getByRole("button", { name: "Expand 2026" }).click()
+      await page.getByRole("button", { name: "Manage source" }).click()
       const card = page.getByRole("heading", { name: "November" }).locator("xpath=ancestor::*[@data-slot='card'][1]")
       await expect(card.getByText(scenario.expectedLast, { exact: true })).toBeVisible()
       await expect(card.getByText(scenario.expectedNext, { exact: true })).toBeVisible()

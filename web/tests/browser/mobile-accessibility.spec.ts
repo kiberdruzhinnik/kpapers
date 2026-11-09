@@ -16,7 +16,7 @@ test("phone layout keeps navigation, management validation, and keyboard sign-in
   const mobileNav = page.getByRole("navigation", { name: "Primary navigation" })
   await mobileNav.getByRole("button", { name: /Feeds/ }).focus()
   await page.keyboard.press("Enter")
-  await expect(page.getByRole("heading", { name: "Feeds" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Feeds", exact: true })).toBeVisible()
   await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeHidden()
 
   await page.getByRole("button", { name: "Create feed" }).click()
@@ -24,7 +24,7 @@ test("phone layout keeps navigation, management validation, and keyboard sign-in
   await page.getByLabel("Author name").fill("Mobile validation feed")
   await page.getByLabel("Refresh interval (optional)").fill("0")
   await page.getByRole("button", { name: "Create feed" }).click()
-  await expect(page.getByRole("alert")).toContainText("Refresh interval must be greater than zero hours.")
+  await expect(page.getByTestId("feed-error-summary")).toContainText("Refresh interval must be greater than zero hours.")
 
   const dimensions = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,

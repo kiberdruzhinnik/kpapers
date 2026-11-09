@@ -220,7 +220,7 @@ describe("feed management workflows", () => {
     await user.type(screen.getByLabelText(/Refresh interval/), "0")
     await user.click(screen.getByRole("button", { name: "Create feed" }))
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Refresh interval must be greater than zero hours.")
+    expect(await screen.findByTestId("feed-error-summary")).toHaveTextContent("Refresh interval must be greater than zero hours.")
   })
 
   it("blocks refresh intervals above the supported form maximum", async () => {
@@ -247,7 +247,7 @@ describe("feed management workflows", () => {
     await openFeeds(user)
 
     await user.click(screen.getByRole("button", { name: "Edit details" }))
-    const details = screen.getByRole("region", { name: "Feed details" })
+    const details = screen.getByRole("dialog", { name: "Edit feed details" })
     const nameInput = within(details).getByLabelText("Author name")
     await user.clear(nameInput)
     await user.type(nameInput, "Ada Lovelace Journal")
@@ -258,10 +258,10 @@ describe("feed management workflows", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds/feed-1", expect.objectContaining({ method: "PUT" }))
 
     await user.click(screen.getByRole("button", { name: "More actions for Ada Lovelace Journal" }))
+    await user.click(screen.getByRole("menuitem", { name: "Archive feed" }))
     expect(screen.getByRole("alertdialog")).toHaveTextContent("will be hidden from refresh and RSS")
     await user.click(screen.getByRole("button", { name: "Archive feed" }))
     expect(await screen.findByText("Archived")).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: /Ada Lovelace Journal/ }))
 
     await user.click(screen.getByRole("button", { name: "Delete permanently" }))
     expect(screen.getByRole("alertdialog")).toHaveTextContent("This cannot be undone.")
@@ -281,10 +281,12 @@ describe("feed management workflows", () => {
     await openFeeds(user)
     await screen.findByRole("region", { name: "Feed details" })
 
-    await user.type(screen.getByLabelText("Add a year"), "2026")
     await user.click(screen.getByRole("button", { name: "Add year" }))
+    await user.type(screen.getByLabelText("Add a year"), "2026")
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add year" }))
     await screen.findByText("2026", { selector: "*[data-slot='card-title']" })
     await user.click(screen.getByRole("button", { name: "Expand 2026" }))
+    await user.click(screen.getByRole("button", { name: "Connect month" }))
     await user.selectOptions(screen.getByLabelText("Month"), "1")
     await user.type(screen.getByLabelText("Public folder link"), "https://disk.yandex.ru/example")
     await user.click(screen.getByRole("button", { name: "Link month" }))
@@ -293,6 +295,7 @@ describe("feed management workflows", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds/feed-1/years/2026/months/1", expect.objectContaining({
       method: "PUT", body: JSON.stringify({ source_url: "https://disk.yandex.ru/example" }),
     }))
+    await user.click(screen.getByRole("button", { name: "Manage source" }))
     await user.click(screen.getByRole("button", { name: "Refresh now" }))
     expect(await screen.findByText("January refresh queued")).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith("/api/management/months/month-jan/refresh", expect.objectContaining({ method: "POST" }))
@@ -305,10 +308,12 @@ describe("feed management workflows", () => {
     const user = userEvent.setup()
     render(<App />)
     await openFeeds(user)
-    await user.type(screen.getByLabelText("Add a year"), "2025")
     await user.click(screen.getByRole("button", { name: "Add year" }))
+    await user.type(screen.getByLabelText("Add a year"), "2025")
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add year" }))
     await screen.findByText("2025", { selector: "*[data-slot='card-title']" })
     await user.click(screen.getByRole("button", { name: "Expand 2025" }))
+    await user.click(screen.getByRole("button", { name: "Connect month" }))
     await user.selectOptions(screen.getByLabelText("Month"), "2")
     await user.type(screen.getByLabelText("Public folder link"), "https://invalid.example")
     await user.click(screen.getByRole("button", { name: "Link month" }))
@@ -346,4 +351,64 @@ describe("feed management workflows", () => {
     expect(fetchMock.mock.calls.filter(([path, init]) => String(path) === "/api/management/feeds" && !init?.method)).toHaveLength(1)
   })
 
+})
+
+describe("approved feed screens", () => {
+  beforeEach(() => localStorage.clear())
+
+  it("keeps hierarchy off the list and offers archived feed restoration through its menu", async () => {
+    const archived = { ...feed, id: "archived", display_name: "Archived author", active: false }
+    const fetchMock = installFeedApi([feed, archived])
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+    await user.click(screen.getByRole("button", { name: /Feeds —/ }))
+    expect(screen.queryByRole("region", { name: "Feed details" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Add year" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("tab", { name: "Archived (1)" }))
+    await user.click(screen.getByRole("button", { name: "Actions for Archived author" }))
+    await user.click(screen.getByRole("menuitem", { name: "Restore" }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds/archived/restore", expect.objectContaining({ method: "POST" })))
+    await user.click(screen.getByRole("tab", { name: "Active (2)" }))
+    expect(screen.getByRole("button", { name: /Archived author/ })).toBeInTheDocument()
+  })
+
+  it("focuses linked validation errors and returns focus when editing is cancelled with Escape", async () => {
+    installFeedApi([feed])
+    const user = userEvent.setup()
+    render(<App />)
+    await openFeeds(user)
+    const edit = screen.getByRole("button", { name: "Edit details" })
+    await user.click(edit)
+    await user.clear(screen.getByLabelText("Author name"))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+    const summary = await screen.findByTestId("feed-error-summary")
+    await waitFor(() => expect(summary).toHaveFocus())
+    const field = screen.getByLabelText("Author name")
+    expect(field).toHaveAttribute("aria-invalid", "true")
+    await user.click(within(summary).getByRole("link", { name: "Enter an author name." }))
+    expect(field).toHaveFocus()
+    expect(field).toHaveAccessibleDescription("Enter an author name.")
+    await user.keyboard("{Escape}")
+    await waitFor(() => expect(edit).toHaveFocus())
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+  })
+
+  it("disables submission while creating and opens the returned feed after it completes", async () => {
+    const fetchMock = installFeedApi()
+    const original = fetchMock.getMockImplementation()!
+    let finish!: () => void
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === "/api/management/feeds" && init?.method === "POST") await new Promise<void>((resolve) => { finish = resolve })
+      return original(input, init)
+    })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(await screen.findByRole("button", { name: "Create feed" }))
+    await user.type(screen.getByLabelText("Author name"), "Pending author")
+    await user.click(screen.getByRole("button", { name: "Create feed" }))
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled()
+    finish()
+    expect(await screen.findByRole("heading", { name: "Pending author" })).toBeInTheDocument()
+  })
 })

@@ -6,17 +6,17 @@ Open `/manage/` in the web application and sign in with the configured operator 
 
 ## Archive, restore, or permanently delete
 
-Use **Archive** to temporarily hide a feed, year, or month from active management, scheduled refresh, and RSS publication. Archived content and identifiers are retained. Restore an archived feed from the archived-feeds list; restore an archived year or month from its feed details. Restoring a child beneath an archived parent does not publish it until the parent is also restored.
+Open a feed’s **More actions** menu or a year’s actions menu to archive that scope. Month actions are under **Manage source**. Use **Archive** to temporarily hide a feed, year, or month from active management, scheduled refresh, and RSS publication. Archived content and identifiers are retained. Restore an archived feed from the **Archived** tab’s contextual menu; restore an archived year or month from its feed details. Restoring a child beneath an archived parent does not publish it until the parent is also restored.
 
 Use **Delete permanently** to remove a feed, year, or month and its descendants, including cached PDFs and refresh history. The UI asks for confirmation. Deleting a feed ends its RSS channel, and a new feed created later receives a different ID. Permanent deletion cannot be undone.
 
 ## Add years and month folders
 
-Open `/manage/feeds`, select a feed, and add a year. Expand the year to link months or view their details. Years start collapsed and remember their individual expanded or collapsed state in this browser for each feed. A year does not create twelve month records automatically. For each month that has a source folder, choose its calendar month and paste the public folder URL, then select **Link month**. Supported links are HTTPS public folders on `disk.yandex.ru` and `cloud.mail.ru`. Months without links stay absent and are not fetched.
+Open `/manage/feeds` and select **Open feed** on an author row. The list separates **Active** and **Archived** feeds; source controls live on the dedicated detail screen. In **Source folders**, select **Add year** to open its focused form. Expand the year and select **Connect month** to open the month-linking form. Years start collapsed and remember their individual expanded or collapsed state in this browser for each feed. A year does not create twelve month records automatically. For each month that has a source folder, choose its calendar month and paste the public folder URL, then select **Link month**. Supported links are HTTPS public folders on `disk.yandex.ru` and `cloud.mail.ru`. Months without links stay absent and are not fetched.
 
 ## Review discovered PDFs
 
-Select **Fetch and parse** for a linked month to list its root PDFs and extract/cache native text. The app ignores subfolders. Select **Review PDFs** to open `/manage/pdf-review` with the selected feed/year/month in its URL and inspect discovered files. Each file shows its name, automatic promotional decision, and extraction status. Use the choice menu to publish a file, skip it as promotional, or return it to the automatic decision. The override is stored with the source document and can be changed later.
+Open **Manage source**, then select **Fetch and parse** for a linked month to list its root PDFs and extract/cache native text. The app ignores subfolders. Select **Review PDFs** to open `/manage/pdf-review` with the selected feed/year/month in its URL and inspect discovered files. Each file shows its name, automatic promotional decision, and extraction status. Use the choice menu to publish a file, skip it as promotional, or return it to the automatic decision. The override is stored with the source document and can be changed later. The automatic classification stays visible independently of the override. Including a PDF does not bypass successful extraction; failed PDFs offer **Retry extraction**.
 
 ## Public access
 
