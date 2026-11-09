@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { Archive, Check, ChevronRight, Copy, FileText, Plus, RefreshCw, Rss, Trash2, Undo2 } from "lucide-react"
+import { useMemo, useRef, useState, type FormEvent } from "react"
+import { Archive, ArrowLeft, Check, ChevronRight, Copy, FileText, MoreHorizontal, Plus, RefreshCw, Rss, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Feed, type Month } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
@@ -15,8 +15,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { HierarchyManagement } from "@/components/feeds/HierarchyManagement"
 
@@ -44,24 +49,33 @@ function FeedForm({ initial, submitLabel, onSubmit, onCancel }: {
     refresh_hours: hoursFromSeconds(initial?.refresh_interval_seconds ?? null),
   }))
   const [pending, setPending] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FeedFormValues, string>>>({})
+  const summaryRef = useRef<HTMLDivElement>(null)
+  function showErrors(errors: Partial<Record<keyof FeedFormValues, string>>) {
+    setFieldErrors(errors)
+    setError("Check the highlighted fields.")
+    requestAnimationFrame(() => summaryRef.current?.focus())
+  }
   const [error, setError] = useState<string | null>(null)
 
   function update(name: keyof FeedFormValues, value: string) {
     setValues((current) => ({ ...current, [name]: value }))
     setError(null)
+    setFieldErrors({})
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const name = values.display_name.trim()
-    if (!name) {
-      setError("Enter an author name.")
-      return
-    }
-    if (values.refresh_hours && (!Number.isFinite(Number(values.refresh_hours)) || Number(values.refresh_hours) <= 0)) {
-      setError("Refresh interval must be greater than zero hours.")
-      return
-    }
+    const invalid: Partial<Record<keyof FeedFormValues, string>> = {}
+    if (!name) invalid.display_name = "Enter an author name."
+    const hours = Number(values.refresh_hours)
+    if (values.refresh_hours && (!Number.isFinite(hours) || hours <= 0)) invalid.refresh_hours = "Refresh interval must be greater than zero hours."
+    else if (hours > 87600) invalid.refresh_hours = "Refresh interval must be at most 87600 hours."
+    else if (values.refresh_hours && Math.abs(hours * 10 - Math.round(hours * 10)) > 0.000001) invalid.refresh_hours = "Use intervals in steps of 0.1 hours."
+    if (Object.keys(invalid).length) { showErrors(invalid); return }
+    setFieldErrors({})
+    setError(null)
     setPending(true)
     try {
       await onSubmit({
@@ -71,6 +85,7 @@ function FeedForm({ initial, submitLabel, onSubmit, onCancel }: {
       })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save feed. Please try again.")
+      requestAnimationFrame(() => summaryRef.current?.focus())
     } finally {
       setPending(false)
     }
@@ -78,25 +93,14 @@ function FeedForm({ initial, submitLabel, onSubmit, onCancel }: {
 
   const id = initial ? `edit-feed-${initial.id}` : "create-feed"
   return (
-    <form className="space-y-4" onSubmit={(event) => void submit(event)}>
-      <div className="space-y-2">
-        <Label htmlFor={`${id}-name`}>Author name</Label>
-        <Input autoComplete="off" id={`${id}-name`} name="display_name" onChange={(event) => update("display_name", event.target.value)} placeholder="e.g. Ada Lovelace" required value={values.display_name} />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor={`${id}-description`}>Description <span className="font-normal text-muted-foreground">(optional)</span></Label>
-        <Textarea id={`${id}-description`} name="description" onChange={(event) => update("description", event.target.value)} placeholder="A short introduction for readers" rows={3} value={values.description} />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor={`${id}-refresh`}>Refresh interval <span className="font-normal text-muted-foreground">(optional)</span></Label>
-        <div className="relative">
-          <Input className="pr-14" id={`${id}-refresh`} max="87600" name="refresh_hours" onChange={(event) => update("refresh_hours", event.target.value)} placeholder="Use defaults" step="0.1" type="number" value={values.refresh_hours} />
-          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">hours</span>
-        </div>
-        <p className="text-xs text-muted-foreground">Leave blank to use the current and older month defaults.</p>
-      </div>
-      {error && <p role="alert" className="rounded-md bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p>}
-      <div className="flex flex-wrap gap-2 pt-1">
+    <form className="flex flex-col gap-6" noValidate onSubmit={(event) => void submit(event)}>
+      {error && <Alert data-testid="feed-error-summary" ref={summaryRef} tabIndex={-1} variant="destructive"><AlertTitle>Could not save feed</AlertTitle><AlertDescription>{Object.keys(fieldErrors).length ? <ul className="flex flex-col gap-1">{Object.entries(fieldErrors).map(([field, message]) => <li key={field}><a className="underline" href={`#${id}-${field}`} onClick={(event) => { event.preventDefault(); document.getElementById(`${id}-${field}`)?.focus() }}>{message}</a></li>)}</ul> : error}</AlertDescription></Alert>}
+      <FieldGroup>
+        <Field data-invalid={Boolean(fieldErrors.display_name)}><FieldLabel htmlFor={`${id}-display_name`}>Author name</FieldLabel><Input aria-describedby={fieldErrors.display_name ? `${id}-name-error` : undefined} aria-invalid={Boolean(fieldErrors.display_name)} autoComplete="off" id={`${id}-display_name`} name="display_name" onChange={(event) => update("display_name", event.target.value)} placeholder="e.g. Ada Lovelace" required value={values.display_name} />{fieldErrors.display_name && <FieldError id={`${id}-name-error`}>{fieldErrors.display_name}</FieldError>}</Field>
+        <Field><FieldLabel htmlFor={`${id}-description`}>Description <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Textarea id={`${id}-description`} name="description" onChange={(event) => update("description", event.target.value)} placeholder="A short introduction for readers" rows={4} value={values.description} /></Field>
+        <Field data-invalid={Boolean(fieldErrors.refresh_hours)}><FieldLabel htmlFor={`${id}-refresh_hours`}>Refresh interval <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Input aria-describedby={`${id}-refresh-help${fieldErrors.refresh_hours ? ` ${id}-refresh-error` : ""}`} aria-invalid={Boolean(fieldErrors.refresh_hours)} id={`${id}-refresh_hours`} max="87600" name="refresh_hours" onChange={(event) => update("refresh_hours", event.target.value)} placeholder="Use defaults" step="0.1" type="number" value={values.refresh_hours} /><FieldDescription id={`${id}-refresh-help`}>In hours. Leave blank to use the current and older month defaults.</FieldDescription>{fieldErrors.refresh_hours && <FieldError id={`${id}-refresh-error`}>{fieldErrors.refresh_hours}</FieldError>}</Field>
+      </FieldGroup>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
         {onCancel && <Button onClick={onCancel} type="button" variant="outline">Cancel</Button>}
         <Button disabled={pending} type="submit">{pending ? "Saving…" : submitLabel}</Button>
       </div>
@@ -159,22 +163,22 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 gap-3">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary"><Rss aria-hidden="true" className="size-5" /></div>
-            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold tracking-tight">{feed.display_name}</h2><Badge variant="secondary">{feed.active ? "Active" : "Archived"}</Badge></div><CardDescription className="mt-1.5 max-w-2xl">{feed.description || "No description added yet."}</CardDescription></div>
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h1>{feed.display_name}</h1><Badge variant="secondary">{feed.active ? "Active" : "Archived"}</Badge></div><CardDescription className="mt-1.5 max-w-2xl">{feed.description || "No description added yet."}</CardDescription></div>
           </div>
           {feed.active && <div className="flex flex-wrap gap-2">
-            <Button disabled={refreshing} onClick={() => void refresh()} variant="outline"><RefreshCw aria-hidden="true" className={refreshing ? "animate-spin" : ""} /> Refresh feed</Button>
-            <Button onClick={() => setEditing((current) => !current)} variant="outline"><FileText aria-hidden="true" /> {editing ? "Close editor" : "Edit details"}</Button>
-            <Button aria-label={`More actions for ${feed.display_name}`} onClick={() => onRequestConfirm({ kind: "archive", feed })} size="icon" variant="ghost"><Archive aria-hidden="true" /></Button>
+
+            <Dialog open={editing} onOpenChange={setEditing}><DialogTrigger asChild><Button variant="outline"><FileText aria-hidden="true" data-icon="inline-start" />Edit details</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Edit feed details</DialogTitle><DialogDescription>Changes to the display name do not change the RSS address.</DialogDescription></DialogHeader><FeedForm initial={feed} onCancel={() => setEditing(false)} onSubmit={save} submitLabel="Save changes" /></DialogContent></Dialog>
           </div>}
           {!feed.active && <div className="flex flex-wrap gap-2">
             <Button onClick={async () => { try { await api.restoreFeed(feed.id); await onSaved(); toast.success("Feed restored") } catch (error) { toast.error(error instanceof Error ? error.message : "Could not restore feed.") } }} variant="outline"><Undo2 aria-hidden="true" /> Restore</Button>
             <Button onClick={() => onRequestConfirm({ kind: "delete", feed })} variant="destructive"><Trash2 aria-hidden="true" /> Delete permanently</Button>
           </div>}
+          {feed.active && <DropdownMenu><DropdownMenuTrigger asChild><Button aria-label={`More actions for ${feed.display_name}`} size="icon" variant="outline"><MoreHorizontal aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>{feed.active && <><DropdownMenuItem disabled={refreshing} onSelect={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh feed</DropdownMenuItem><DropdownMenuItem variant="destructive" onSelect={() => onRequestConfirm({ kind: "archive", feed })}><Archive aria-hidden="true" />Archive feed</DropdownMenuItem></>}</DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
         </CardHeader>
         <CardContent className="border-t pt-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -184,10 +188,6 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
         </CardContent>
       </Card>
 
-      {editing && <Card>
-        <CardHeader><CardTitle>Edit feed details</CardTitle><CardDescription>Changes to the display name do not change the RSS address.</CardDescription></CardHeader>
-        <CardContent><FeedForm initial={feed} onCancel={() => setEditing(false)} onSubmit={save} submitLabel="Save changes" /></CardContent>
-      </Card>}
 
       <HierarchyManagement active={feed.active} feedId={feed.id} onReviewMonth={onReviewMonth} />
 
@@ -227,9 +227,16 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
 }) {
   const activeFeeds = useMemo(() => feeds.filter((feed) => feed.active), [feeds])
   const archivedFeeds = useMemo(() => feeds.filter((feed) => !feed.active), [feeds])
-  const [localSelectedId, setLocalSelectedId] = useState<string | null>(() => activeFeeds[0]?.id ?? null)
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
   const selectedId = selectedFeedId === undefined ? localSelectedId : selectedFeedId
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+  const [confirmPending, setConfirmPending] = useState(false)
+  const confirmTrigger = useRef<HTMLElement | null>(null)
+  function requestConfirm(action: ConfirmAction) {
+    const label = selectedFeedId ? `More actions for ${action.feed.display_name}` : `Actions for ${action.feed.display_name}`
+    confirmTrigger.current = Array.from(document.querySelectorAll("button")).find((button) => button.getAttribute("aria-label") === label) ?? document.activeElement as HTMLElement
+    setConfirmAction(action)
+  }
   const selectedFeed = feeds.find((feed) => feed.id === selectedId) ?? null
 
   function selectFeed(id: string | null) {
@@ -237,20 +244,18 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
     onSelectFeed?.(id)
   }
 
-  useEffect(() => {
-    if (selectedFeedId !== undefined) setLocalSelectedId(selectedFeedId)
-  }, [selectedFeedId])
 
   async function reloadFeeds(selectId?: string) {
     const loaded = await api.feeds()
     onFeedsChange(loaded)
     if (selectId) selectFeed(selectId)
-    else if (selectedId && !loaded.some((feed) => feed.id === selectedId && feed.active)) selectFeed(loaded.find((feed) => feed.active)?.id ?? null)
+    else if (selectedId && !loaded.some((feed) => feed.id === selectedId)) selectFeed(null)
   }
 
   async function confirm() {
     if (!confirmAction) return
     const { kind, feed } = confirmAction
+    setConfirmPending(true)
     try {
       if (kind === "archive") {
         await api.archiveFeed(feed.id)
@@ -263,43 +268,32 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
       await reloadFeeds()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not update feed.")
-    }
+    } finally { setConfirmPending(false) }
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div><p className="mb-2 text-sm text-muted-foreground">Publishing workspace</p><h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">Feeds</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">Create author channels, organize source folders, and keep public RSS addresses stable.</p></div>
-        <Button onClick={onCreate}><Plus aria-hidden="true" />Create feed</Button>
-        <Badge className="h-7 rounded-full px-3" variant="secondary">{activeFeeds.length} active · {archivedFeeds.length} archived</Badge>
-      </div>
-      <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
-        <aside className="space-y-5">
-          <Card>
-            <CardHeader className="pb-3"><CardTitle className="text-base">Your feeds</CardTitle><CardDescription>Select a feed to manage its details.</CardDescription></CardHeader>
-            <CardContent className="space-y-1 px-2 pb-3">
-              {activeFeeds.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">No active feeds yet.</p>}
-              {activeFeeds.map((feed) => <button aria-current={selectedId === feed.id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors ${selectedId === feed.id ? "bg-primary/8 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`} key={feed.id} onClick={() => selectFeed(feed.id)} type="button">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background"><Rss aria-hidden="true" className="size-3.5" /></span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{feed.display_name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{feed.description || "No description"}</span></span>
-                <ChevronRight aria-hidden="true" className="size-4 shrink-0 opacity-50" />
-              </button>)}
-              {archivedFeeds.length > 0 && <div className="mt-3 border-t px-2 pt-3"><p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Archived</p>
-                {archivedFeeds.map((feed) => <button className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm ${selectedId === feed.id ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted"}`} key={feed.id} onClick={() => selectFeed(feed.id)} type="button"><Archive aria-hidden="true" className="size-3.5" /><span className="min-w-0 flex-1 truncate">{feed.display_name}</span><ChevronRight aria-hidden="true" className="size-3.5" /></button>)}
-              </div>}
-            </CardContent>
-          </Card>
-
-        </aside>
-        <section aria-label="Feed details" className="min-w-0">
-          {selectedFeed
-            ? <FeedDetails feed={selectedFeed} onRequestConfirm={setConfirmAction} onReviewMonth={onReviewMonth} onSaved={() => reloadFeeds(selectedFeed.id)} />
-            : <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed bg-background px-6 text-center"><div className="mb-4 flex size-12 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Rss aria-hidden="true" className="size-5" /></div><h2 className="text-lg font-semibold">Choose a feed</h2><p className="mt-2 max-w-sm text-sm text-muted-foreground">Select an author on the left or create a feed to get started.</p></div>}
-        </section>
-      </div>
+    <div className="flex flex-col gap-6">
+      {selectedFeed ? <section aria-label="Feed details" className="flex min-w-0 flex-col gap-5">
+        <Button className="self-start" onClick={() => selectFeed(null)} variant="ghost"><ArrowLeft aria-hidden="true" data-icon="inline-start" />All feeds</Button>
+        <FeedDetails key={selectedFeed.id} feed={selectedFeed} onRequestConfirm={requestConfirm} onReviewMonth={onReviewMonth} onSaved={() => reloadFeeds(selectedFeed.id)} />
+      </section> : <>
+        <div className="flex flex-wrap items-start justify-between gap-4"><div><h1>Feeds</h1><p className="mt-2 text-sm text-muted-foreground">Manage author feeds and their source folders.</p></div><Button onClick={onCreate}><Plus aria-hidden="true" data-icon="inline-start" />Create feed</Button></div>
+        <Tabs defaultValue="active"><TabsList aria-label="Feed status"><TabsTrigger value="active">Active ({activeFeeds.length})</TabsTrigger><TabsTrigger value="archived">Archived ({archivedFeeds.length})</TabsTrigger></TabsList>
+          {[{value: "active", items: activeFeeds}, {value: "archived", items: archivedFeeds}].map(({value, items}) => <TabsContent key={value} value={value}>
+            <Card><CardHeader><CardTitle>{value === "active" ? "Active feeds" : "Archived feeds"}</CardTitle><CardDescription>Open a feed to manage its details and source folders.</CardDescription></CardHeader><CardContent className="flex flex-col gap-2">
+              {items.map((feed) => <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border p-4" key={feed.id}>
+                <Button className="h-auto min-w-0 flex-1 justify-start gap-3 whitespace-normal px-0 text-left" onClick={() => selectFeed(feed.id)} variant="ghost"><Rss aria-hidden="true" data-icon="inline-start" /><span className="min-w-0 flex-1"><span className="block break-words">{feed.display_name}</span><span className="mt-1 block break-words text-sm font-normal text-muted-foreground">{feed.description || "No description"}</span></span><span className="hidden sm:inline">Open feed</span><ChevronRight aria-hidden="true" data-icon="inline-end" /></Button>
+                <Badge variant={feed.active ? "success" : "outline"}>{feed.active ? "Active" : "Archived"}</Badge>
+                {!feed.active && <DropdownMenu><DropdownMenuTrigger asChild><Button aria-label={`Actions for ${feed.display_name}`} size="icon" variant="ghost"><MoreHorizontal aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem onSelect={async () => { try { await api.restoreFeed(feed.id); await reloadFeeds(); toast.success("Feed restored") } catch (error) { toast.error(error instanceof Error ? error.message : "Could not restore feed.") } }}><Undo2 aria-hidden="true" />Restore</DropdownMenuItem><DropdownMenuItem variant="destructive" onSelect={() => requestConfirm({kind: "delete", feed})}><Trash2 aria-hidden="true" />Delete permanently</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
+              </div>)}
+              {items.length === 0 && <Empty><EmptyHeader><EmptyMedia variant="icon"><Rss aria-hidden="true" /></EmptyMedia><EmptyTitle>{value === "active" ? "No active feeds yet" : "No archived feeds"}</EmptyTitle><EmptyDescription>{value === "active" ? "Create an author feed to start connecting source folders." : "Feeds you archive will appear here."}</EmptyDescription></EmptyHeader>{value === "active" && <EmptyContent><Button onClick={onCreate}>Create your first feed</Button></EmptyContent>}</Empty>}
+            </CardContent></Card>
+          </TabsContent>)}
+        </Tabs>
+      </>}
 
       <AlertDialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null) }}>
-        <AlertDialogContent>
+        <AlertDialogContent onCloseAutoFocus={(event) => { if (confirmTrigger.current?.isConnected) { event.preventDefault(); confirmTrigger.current.focus() } }}>
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmAction?.kind === "delete" ? "Permanently delete this feed?" : "Archive this feed?"}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -310,7 +304,7 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className={confirmAction?.kind === "delete" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""} onClick={(event) => { event.preventDefault(); void confirm() }}>
+            <AlertDialogAction disabled={confirmPending} className={confirmAction?.kind === "delete" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""} onClick={(event) => { event.preventDefault(); void confirm() }}>
               {confirmAction?.kind === "delete" ? "Delete permanently" : "Archive feed"}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -329,9 +323,9 @@ export function CreateFeed({ onCreated, onCancel }: { onCreated: (feed: Feed) =>
   }
 
   return (
-    <div className="mx-auto w-full max-w-xl space-y-6">
-      <div><h1 className="text-2xl font-semibold tracking-tight">Create a feed</h1><p className="mt-2 text-sm text-muted-foreground">Add the author-facing details for a new channel.</p></div>
-      <Card><CardContent className="pt-6"><FeedForm onCancel={onCancel} onSubmit={create} submitLabel="Create feed" /></CardContent></Card>
+    <div className="mx-auto w-full max-w-[640px] flex flex-col gap-6">
+      <div><h1>Create a feed</h1><p className="mt-2 text-sm text-muted-foreground">Add the author-facing details for a new channel.</p></div>
+      <Card><CardHeader><CardTitle>Feed details</CardTitle><CardDescription>Connect source folders after creating your feed.</CardDescription></CardHeader><CardContent><FeedForm onCancel={onCancel} onSubmit={create} submitLabel="Create feed" /></CardContent></Card>
     </div>
   )
 }

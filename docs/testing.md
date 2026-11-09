@@ -24,13 +24,13 @@ This map ties production behavior and trust boundaries to their current tests an
 | `web/src/App.tsx` | `App.test.tsx`, browser environment/mobile/operator journeys cover `/manage/` routes, protected deep links, creation, browser history, and deployed reloads; RSS stays at `/feeds/{id}` | New session and navigation states as workflows change |
 | `web/src/components/feeds/*` | `FeedManagement.test.tsx`, `HierarchyManagement.test.tsx`; browser operator journey covers dedicated creation, retries, validation, per-feed/year expansion persistence, keyboard toggles, blocked storage, and feed/year/month workflows | New user-input boundaries as forms change |
 | `web/src/lib/datetime.ts` | `datetime.test.ts` and `local-timestamps.spec.ts` cover exact local formatting, null/invalid values, date rollover, Europe/Moscow, and New York daylight-saving offsets | Additional timestamp input formats if the API contract changes |
-| `web/src/components/documents/PdfReview.tsx` | `PdfReview.test.tsx`; browser operator journey | Missing/error/empty states only where current tests do not cover expected behavior |
+| `web/src/components/documents/PdfReview.tsx` | `PdfReview.test.tsx` covers classification independent of override, failed saves, and extraction retry; browser operator journey | Missing/error/empty states only where current tests do not cover expected behavior |
 | `web/src/lib/api.ts` | `api.test.ts` covers same-origin JSON requests, empty responses, common HTTP/network failures, and malformed successful JSON bodies | Additional API contract errors as they are introduced |
 | `web/src/components/ui/*`, `main.tsx`, `lib/utils.ts`, styles/assets | Rendered through application tests/build; no dedicated component tests identified | Add focused tests only for behavior-bearing primitives/utilities; visual primitives and static assets remain covered by integration/build checks |
 
 ## Cross-layer checks
 
-`web/tests/browser/*` covers responsive layout, accessibility, sign-in, navigation, and operator workflows. `tests/e2e/test_miniflux.py` covers feed publication, PDF extraction, safe RSS content, exact document links, cache identity, and reader ingestion. `scripts/integration-e2e.sh` runs these suites in isolated Compose projects while reusing the same production API and web images.
+`web/tests/browser/*` covers responsive layout, accessibility, sign-in, navigation, and operator workflows. `approved-design.spec.ts` checks all five approved screens at 320, 375, 768, 1024, and 1440px widths plus 812×375 landscape, long names/URLs, linked validation errors, dialog focus restoration, and reduced motion. `tests/e2e/test_miniflux.py` covers feed publication, PDF extraction, safe RSS content, exact document links, cache identity, and reader ingestion. `scripts/integration-e2e.sh` runs these suites in isolated Compose projects while reusing the same production API and web images.
 
 ### Validation map
 

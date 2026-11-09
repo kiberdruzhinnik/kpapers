@@ -68,6 +68,9 @@ describe("operator session and dashboard shell", () => {
       expect(screen.getByTestId("source-folder-count")).toHaveTextContent("3")
       expect(screen.getByTestId("needs-review-count")).toHaveTextContent("2")
     })
+    expect(screen.getByText("Publishing workflow")).toBeInTheDocument()
+    expect(screen.getByText("2 documents need attention")).toBeInTheDocument()
+    expect(screen.queryByText("Set up your first author feed in a few steps.")).not.toBeInTheDocument()
     expect(screen.queryByText("Refresh scheduler")).not.toBeInTheDocument()
     expect(screen.queryByText("Kpapers operator desk")).not.toBeInTheDocument()
     expect(screen.queryByText("Feeds update on your schedule")).not.toBeInTheDocument()
@@ -223,6 +226,7 @@ describe("operator session and dashboard shell", () => {
     await waitFor(() => {
       expect(screen.getByTestId("source-folder-count")).toHaveTextContent("0")
       expect(screen.getByTestId("needs-review-count")).toHaveTextContent("0")
+      expect(screen.getByText("No documents need attention")).toBeInTheDocument()
     })
   })
 
@@ -245,6 +249,8 @@ describe("operator session and dashboard shell", () => {
     await waitFor(() => {
       expect(screen.getByTestId("source-folder-count")).toHaveTextContent("Unavailable")
       expect(screen.getByTestId("needs-review-count")).toHaveTextContent("Unavailable")
+      expect(screen.getByText(/Review queue unavailable/)).toBeInTheDocument()
+      expect(screen.queryByText("No documents need attention")).not.toBeInTheDocument()
     })
   })
 
@@ -318,4 +324,17 @@ describe("operator session and dashboard shell", () => {
     await screen.findByRole("heading", { name: "Feeds" })
   })
 
+})
+
+describe("Overview onboarding", () => {
+  it("shows first-feed guidance only when there are no active feeds", async () => {
+    const fetchMock = installApi(true)
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (input, init) => String(input) === "/api/management/feeds" ? response([]) : original(input, init))
+    render(<App />)
+    await screen.findByRole("heading", { name: "Overview" })
+    expect(screen.getByText("Get started")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Create your first feed" })).toBeInTheDocument()
+    expect(screen.queryByText("Publishing workflow")).not.toBeInTheDocument()
+  })
 })
