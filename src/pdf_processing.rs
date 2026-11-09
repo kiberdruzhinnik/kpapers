@@ -8,7 +8,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 10;
+const EXTRACTION_PIPELINE_REVISION: u32 = 11;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -133,11 +133,6 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             trim_run_edges(&mut line.runs);
         }
         lines.retain(|line| !line.text().trim().is_empty());
-        if let Some(first) = lines.iter().position(|line| !line.text().trim().is_empty())
-            && lines[first].text().trim() == (page_index + 1).to_string()
-        {
-            lines.remove(first);
-        }
         pages.push(lines);
     }
 
@@ -153,6 +148,9 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
     {
         pages.remove(0);
     }
+    // Printed page numbering normally starts at 1 on the first content page, so
+    // labels must be compared after leading advertisement pages are removed.
+    strip_page_labels_by_content_position(&mut pages);
     if let Some(first_page) = pages.first_mut() {
         strip_sponsr_preamble(first_page);
     }
@@ -398,20 +396,15 @@ fn parse_markdown_bold(runs: &mut Vec<StyledRun>) {
     *runs = parsed;
 }
 
-#[cfg(test)]
-fn strip_page_label(page: &str, page_number: usize) -> String {
+fn strip_page_label_lines(lines: &mut Vec<StyledLine>, page_number: usize) {
     let expected = page_number.to_string();
-    let mut first_nonempty_seen = false;
-    page.lines()
-        .filter(|line| {
-            if !first_nonempty_seen && !line.trim().is_empty() {
-                first_nonempty_seen = true;
-                return line.trim() != expected;
-            }
-            true
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    lines.retain(|line| line.text().trim() != expected);
+}
+
+fn strip_page_labels_by_content_position(pages: &mut [Vec<StyledLine>]) {
+    for (page_index, lines) in pages.iter_mut().enumerate() {
+        strip_page_label_lines(lines, page_index + 1);
+    }
 }
 
 fn is_skladchik_promotion(text: &str) -> bool {
@@ -635,14 +628,35 @@ fn body_text_size(pages: &[Vec<StyledLine>]) -> f32 {
     }
     size_counts
         .iter()
+        .max_by(|(left_size, left_count), (right_size, right_count)| {
+            left_count
+                .cmp(right_count)
+                .then_with(|| right_size.total_cmp(left_size))
+        })
         .map(|(size, _)| *size)
-        .min_by(f32::total_cmp)
         .unwrap_or(12.0)
         .max(1.0)
 }
 
 fn is_heading_candidate(line: &StyledLine, body_size: f32) -> bool {
-    line.text().chars().count() <= 160 && line.size >= body_size * 1.08
+    let text_length = line.text().chars().count();
+    if text_length > 160 {
+        return false;
+    }
+
+    let content_runs = line
+        .runs
+        .iter()
+        .filter(|run| run.text.chars().any(|ch| !ch.is_whitespace()))
+        .collect::<Vec<_>>();
+    let fully_bold = !content_runs.is_empty() && content_runs.iter().all(|run| run.bold);
+    let short_colon_heading = text_length <= 80 && line.text().trim_end().ends_with(':');
+    let emphasized_heading = line.size >= body_size * 1.12 && (fully_bold || short_colon_heading);
+    let prominent_and_isolated = line.size >= body_size * 1.35
+        && line.gap_before >= body_size * 1.5
+        && text_length <= 80;
+
+    emphasized_heading || prominent_and_isolated
 }
 
 fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: f32) -> bool {
@@ -1005,8 +1019,9 @@ mod tests {
     use super::{
         StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
         is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
-        pages_to_text, push_styled_char, strip_page_label, strip_sponsr_branding,
-        strip_sponsr_preamble, text_to_safe_html,
+        pages_to_text, push_styled_char, strip_page_label_lines,
+        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
+        text_to_safe_html,
     };
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
@@ -1145,17 +1160,49 @@ mod tests {
     }
 
     #[test]
-    fn strips_matching_number_from_first_nonempty_line() {
-        assert_eq!(
-            strip_page_label("\n  2  \nArticle starts here", 2),
-            "\nArticle starts here"
-        );
+    fn strips_matching_page_number_wherever_it_appears_in_extracted_order() {
+        let mut leading = vec![line("  2  ", 10.0), line("Article starts here", 12.0)];
+        strip_page_label_lines(&mut leading, 2);
+        assert_eq!(leading.iter().map(StyledLine::text).collect::<Vec<_>>(), ["Article starts here"]);
+
+        let mut later = vec![line("Article", 12.0), line("2", 10.0), line("More", 12.0)];
+        strip_page_label_lines(&mut later, 2);
+        assert_eq!(later.iter().map(StyledLine::text).collect::<Vec<_>>(), ["Article", "More"]);
     }
 
     #[test]
     fn preserves_nonmatching_or_body_numbers() {
-        assert_eq!(strip_page_label("3\nArticle", 2), "3\nArticle");
-        assert_eq!(strip_page_label("Article\n2\nMore", 2), "Article\n2\nMore");
+        let mut lines = vec![line("3", 10.0), line("Page 2", 12.0), line("2 items", 12.0)];
+        strip_page_label_lines(&mut lines, 2);
+        assert_eq!(lines.iter().map(StyledLine::text).collect::<Vec<_>>(), ["3", "Page 2", "2 items"]);
+    }
+
+    #[test]
+    fn strips_labels_by_content_position_when_leading_ad_shifts_printed_numbering() {
+        let mut pages = vec![
+            vec![line("1", 11.0), line("Title", 22.0)],
+            vec![
+                line("First content page body", 12.0),
+                line("2 items", 12.0),
+                line("2", 11.0),
+            ],
+            vec![line("3", 11.0), line("Second content page body", 12.0)],
+        ];
+
+        strip_page_labels_by_content_position(&mut pages);
+
+        assert_eq!(
+            pages[0].iter().map(StyledLine::text).collect::<Vec<_>>(),
+            ["Title"]
+        );
+        assert_eq!(
+            pages[1].iter().map(StyledLine::text).collect::<Vec<_>>(),
+            ["First content page body", "2 items"]
+        );
+        assert_eq!(
+            pages[2].iter().map(StyledLine::text).collect::<Vec<_>>(),
+            ["Second content page body"]
+        );
     }
 
     #[test]
@@ -1301,9 +1348,9 @@ mod tests {
     fn cache_fingerprint_invalidates_old_entries_and_is_stable() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert!(processed.starts_with("pdf-text-v10:"));
+        assert!(processed.starts_with("pdf-text-v11:"));
+        assert_ne!(processed, format!("pdf-text-v10:{source}"));
         assert_ne!(processed, format!("pdf-text-v9:{source}"));
-        assert_ne!(processed, format!("pdf-text-v8:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
     }
@@ -1668,6 +1715,39 @@ mod tests {
             html,
             "<h1><strong>Document title</strong></h1>\n<h2><strong>Section</strong></h2>\n<p>Body text</p>"
         );
+    }
+
+    #[test]
+    fn prominent_prose_stays_a_paragraph_without_heading_typography() {
+        let page = vec![
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Document title".into(),
+                    bold: true,
+                    italic: false,
+                }],
+                size: 24.0,
+                gap_before: 0.0,
+                left: 50.0,
+            },
+            line("Ordinary body text establishes the common font size.", 12.0),
+            StyledLine {
+                runs: vec![StyledRun {
+                    text: "Здесь уместно вспомнить нашу собственную недавнюю историю, в ходе которой под занавес 90-х как бы из ниоткуда явился В. В. Путин, воспитанник специфической профессиональной школы.".into(),
+                    bold: false,
+                    italic: false,
+                }],
+                size: 14.0,
+                gap_before: 36.0,
+                left: 50.0,
+            },
+            line("More ordinary body text follows the prominent paragraph.", 12.0),
+        ];
+
+        let html = lines_to_html(&[page]);
+        assert!(html.starts_with("<h1><strong>Document title</strong></h1>"), "{html}");
+        assert!(html.contains("<p>Здесь уместно вспомнить нашу собственную недавнюю историю"), "{html}");
+        assert!(!html.contains("<h2>Здесь уместно вспомнить"), "{html}");
     }
 
     #[test]
