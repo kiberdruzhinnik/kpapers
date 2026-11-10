@@ -8,7 +8,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 11;
+const EXTRACTION_PIPELINE_REVISION: u32 = 12;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -652,9 +652,8 @@ fn is_heading_candidate(line: &StyledLine, body_size: f32) -> bool {
     let fully_bold = !content_runs.is_empty() && content_runs.iter().all(|run| run.bold);
     let short_colon_heading = text_length <= 80 && line.text().trim_end().ends_with(':');
     let emphasized_heading = line.size >= body_size * 1.12 && (fully_bold || short_colon_heading);
-    let prominent_and_isolated = line.size >= body_size * 1.35
-        && line.gap_before >= body_size * 1.5
-        && text_length <= 80;
+    let prominent_and_isolated =
+        line.size >= body_size * 1.35 && line.gap_before >= body_size * 1.5 && text_length <= 80;
 
     emphasized_heading || prominent_and_isolated
 }
@@ -689,6 +688,36 @@ fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: 
     similar_size && matching_style && compatible_position
 }
 
+fn large_gap_continues_sentence(previous: &StyledLine, next: &StyledLine) -> bool {
+    let previous_text = previous.text();
+    let next_text = next.text();
+    let previous_end = previous_text.trim_end();
+    let Some(last_char) = previous_end.chars().next_back() else {
+        return false;
+    };
+    if !matches!(last_char, ',' | ';' | ':') {
+        return false;
+    }
+    let Some(first_char) = next_text.trim_start().chars().next() else {
+        return false;
+    };
+    if !first_char.is_lowercase() {
+        return false;
+    }
+
+    let similar_size = (previous.size - next.size).abs() <= previous.size.max(next.size) * 0.05;
+    let matching_style = last_content_style(previous)
+        .zip(first_content_style(next))
+        .is_some_and(|(before, after)| before == after);
+    let compatible_position = (previous.left - next.left).abs() <= previous.size * 0.5;
+    similar_size && matching_style && compatible_position
+}
+
+fn large_gap_starts_paragraph(previous: &StyledLine, next: &StyledLine) -> bool {
+    next.gap_before > next.size.max(previous.size) * 1.8
+        && !large_gap_continues_sentence(previous, next)
+}
+
 fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
     let body_size = body_text_size(pages);
     let mut text = String::new();
@@ -715,13 +744,18 @@ fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
         if !text.is_empty() && previous_page_last.is_none() {
             text.push_str("\n\n");
         }
-        text.push_str(
-            &lines
-                .iter()
-                .map(|line| line.text())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
+        for (index, line) in lines.iter().enumerate() {
+            if index > 0 {
+                let previous = lines[index - 1];
+                let separator = if large_gap_starts_paragraph(previous, line) {
+                    "\n\n"
+                } else {
+                    "\n"
+                };
+                text.push_str(separator);
+            }
+            text.push_str(&line.text());
+        }
         previous_page_last = lines.last().copied();
     }
     text
@@ -950,7 +984,7 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
                 blocks.push((tag.to_owned(), line.runs.clone(), in_quote));
             } else {
                 let paragraph_break = previous_line
-                    .is_some_and(|previous| line.gap_before > line.size.max(previous.size) * 1.8);
+                    .is_some_and(|previous| large_gap_starts_paragraph(previous, line));
                 if (paragraph_break || (!paragraph.is_empty() && paragraph_quote != in_quote))
                     && !paragraph.is_empty()
                 {
@@ -1018,8 +1052,8 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 mod tests {
     use super::{
         StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
-        is_skladchik_purchase_promotion, is_xml_10_char, lines_to_html, normalize_text,
-        pages_to_text, push_styled_char, strip_page_label_lines,
+        is_skladchik_purchase_promotion, is_xml_10_char, large_gap_continues_sentence,
+        lines_to_html, normalize_text, pages_to_text, push_styled_char, strip_page_label_lines,
         strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
         text_to_safe_html,
     };
@@ -1160,21 +1194,59 @@ mod tests {
     }
 
     #[test]
+    fn large_gap_continuation_requires_continuation_punctuation() {
+        let previous = line(
+            "Нужно всей планетой платить очень много денег зелёным спасителям,",
+            15.0,
+        );
+        let next = line(
+            "а доказательством их эффективности будет то, что напророченная",
+            15.0,
+        );
+        assert!(large_gap_continues_sentence(&previous, &next));
+
+        let completed = line("Первый абзац закончен.", 15.0);
+        assert!(!large_gap_continues_sentence(&completed, &next));
+    }
+
+    #[test]
+    fn large_gap_continuation_rejects_incompatible_alignment_and_style() {
+        let previous = line("A sentence continues,", 15.0);
+        let mut next = line("with matching layout.", 15.0);
+
+        next.left = 60.0;
+        assert!(!large_gap_continues_sentence(&previous, &next));
+
+        next.left = previous.left;
+        next.runs[0].bold = true;
+        assert!(!large_gap_continues_sentence(&previous, &next));
+    }
+
+    #[test]
     fn strips_matching_page_number_wherever_it_appears_in_extracted_order() {
         let mut leading = vec![line("  2  ", 10.0), line("Article starts here", 12.0)];
         strip_page_label_lines(&mut leading, 2);
-        assert_eq!(leading.iter().map(StyledLine::text).collect::<Vec<_>>(), ["Article starts here"]);
+        assert_eq!(
+            leading.iter().map(StyledLine::text).collect::<Vec<_>>(),
+            ["Article starts here"]
+        );
 
         let mut later = vec![line("Article", 12.0), line("2", 10.0), line("More", 12.0)];
         strip_page_label_lines(&mut later, 2);
-        assert_eq!(later.iter().map(StyledLine::text).collect::<Vec<_>>(), ["Article", "More"]);
+        assert_eq!(
+            later.iter().map(StyledLine::text).collect::<Vec<_>>(),
+            ["Article", "More"]
+        );
     }
 
     #[test]
     fn preserves_nonmatching_or_body_numbers() {
         let mut lines = vec![line("3", 10.0), line("Page 2", 12.0), line("2 items", 12.0)];
         strip_page_label_lines(&mut lines, 2);
-        assert_eq!(lines.iter().map(StyledLine::text).collect::<Vec<_>>(), ["3", "Page 2", "2 items"]);
+        assert_eq!(
+            lines.iter().map(StyledLine::text).collect::<Vec<_>>(),
+            ["3", "Page 2", "2 items"]
+        );
     }
 
     #[test]
@@ -1348,7 +1420,8 @@ mod tests {
     fn cache_fingerprint_invalidates_old_entries_and_is_stable() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert!(processed.starts_with("pdf-text-v11:"));
+        assert!(processed.starts_with("pdf-text-v12:"));
+        assert_ne!(processed, format!("pdf-text-v11:{source}"));
         assert_ne!(processed, format!("pdf-text-v10:{source}"));
         assert_ne!(processed, format!("pdf-text-v9:{source}"));
         assert_ne!(processed, source);
@@ -1459,6 +1532,41 @@ mod tests {
             vec![line("Первый абзац полностью завершен.", 12.0)],
             vec![line("Следующий абзац начинается здесь.", 12.0)],
         ];
+
+        assert_eq!(
+            normalize_text(&pages_to_text(&pages)),
+            "Первый абзац полностью завершен.\n\nСледующий абзац начинается здесь."
+        );
+        assert_eq!(
+            lines_to_html(&pages),
+            "<p>Первый абзац полностью завершен.</p>\n<p>Следующий абзац начинается здесь.</p>"
+        );
+    }
+
+    #[test]
+    fn joins_sentence_continuation_across_large_within_page_gap_in_text_and_html() {
+        let first = line(
+            "Нужно всей планетой платить очень много денег зелёным спасителям,",
+            15.0,
+        );
+        let mut continuation = line(
+            "а доказательством их эффективности будет то, что напророченная ими же всеобщая гибель не состоится.",
+            15.0,
+        );
+        continuation.gap_before = 39.0;
+        let pages = vec![vec![first, continuation]];
+        let expected = "Нужно всей планетой платить очень много денег зелёным спасителям, а доказательством их эффективности будет то, что напророченная ими же всеобщая гибель не состоится.";
+
+        assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
+        assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn keeps_large_gap_after_completed_sentence_as_paragraph_boundary() {
+        let first = line("Первый абзац полностью завершен.", 15.0);
+        let mut next_paragraph = line("Следующий абзац начинается здесь.", 15.0);
+        next_paragraph.gap_before = 39.0;
+        let pages = vec![vec![first, next_paragraph]];
 
         assert_eq!(
             normalize_text(&pages_to_text(&pages)),
@@ -1745,8 +1853,14 @@ mod tests {
         ];
 
         let html = lines_to_html(&[page]);
-        assert!(html.starts_with("<h1><strong>Document title</strong></h1>"), "{html}");
-        assert!(html.contains("<p>Здесь уместно вспомнить нашу собственную недавнюю историю"), "{html}");
+        assert!(
+            html.starts_with("<h1><strong>Document title</strong></h1>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<p>Здесь уместно вспомнить нашу собственную недавнюю историю"),
+            "{html}"
+        );
         assert!(!html.contains("<h2>Здесь уместно вспомнить"), "{html}");
     }
 

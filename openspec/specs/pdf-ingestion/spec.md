@@ -100,7 +100,7 @@ The system SHALL omit a standalone numeric page label when it matches that page'
 - **THEN** the number is preserved
 
 ### Requirement: Join wrapped lines within paragraphs
-The system SHALL join line-wrapped text within a paragraph using spaces while preserving paragraph boundaries, including when a paragraph continues across adjacent PDF pages.
+The system SHALL join line-wrapped text within a paragraph using spaces while preserving paragraph boundaries, including when a paragraph continues across adjacent PDF pages. A large vertical gap alone SHALL NOT split a sentence when the text and layout indicate that the next line continues it.
 
 #### Scenario: Prose wraps across extracted lines
 - **WHEN** a paragraph is extracted as multiple lines separated by line breaks
@@ -116,6 +116,14 @@ The system SHALL join line-wrapped text within a paragraph using spaces while pr
 
 #### Scenario: A paragraph boundary falls at a page boundary
 - **WHEN** the PDF layout indicates that the preceding paragraph ends and a new paragraph begins on the next page
+- **THEN** the paragraphs remain distinct in extracted text and published HTML
+
+#### Scenario: A sentence continues after a large vertical gap
+- **WHEN** a line ends with continuation punctuation such as a comma and the following line begins as a grammatical continuation, with compatible text styling and alignment despite a large vertical gap
+- **THEN** both lines remain in one paragraph in extracted text and published HTML
+
+#### Scenario: A large gap marks a genuine paragraph boundary
+- **WHEN** the PDF layout indicates that a large vertical gap separates complete prose paragraphs
 - **THEN** the paragraphs remain distinct in extracted text and published HTML
 
 ### Requirement: Render PDF headings with semantic levels
