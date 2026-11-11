@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD: Update Purpose after archive.
+Configures how the web container locates the API service so Nginx can proxy API routes to it, and reports a clear startup error when the configured endpoint is missing or invalid.
 
 ## Requirements
 

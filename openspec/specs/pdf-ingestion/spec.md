@@ -127,11 +127,14 @@ The system SHALL join line-wrapped text within a paragraph using spaces while pr
 - **THEN** the paragraphs remain distinct in extracted text and published HTML
 
 ### Requirement: Render PDF headings with semantic levels
-The system SHALL identify document titles and section headings from corroborating PDF typography and layout cues and render them using semantic heading tags from `<h1>` through `<h3>` according to their document hierarchy. Font size or spacing alone SHALL NOT cause ordinary prose to be classified as a heading. The document title uses `<h1>`, top-level headings use `<h2>`, and nested headings use `<h3>`. Visual continuation lines of one logical heading SHALL be combined with whitespace between words. Text that would otherwise be classified below `<h3>` SHALL remain paragraph content.
+The system SHALL identify document titles and section headings from corroborating PDF typography and layout cues and render them using semantic heading tags from `<h1>` through `<h3>` according to their document hierarchy. The document title uses `<h1>`, top-level headings use `<h2>`, and nested headings use `<h3>`.
 
 #### Scenario: Render document title and supported section hierarchy
 - **WHEN** a PDF contains a document title and visually distinct section and subsection headings supported by typography and layout cues
 - **THEN** the title is rendered as `<h1>`, sections as `<h2>`, and nested headings as `<h3>`
+
+### Requirement: Keep ordinary prose as paragraph content
+Font size or spacing alone SHALL NOT cause ordinary prose to be classified as a heading. Text that would otherwise be classified below `<h3>` SHALL remain paragraph content.
 
 #### Scenario: Preserve ordinary prose as paragraphs
 - **WHEN** extracted text is ordinary body prose rather than a heading
@@ -141,14 +144,6 @@ The system SHALL identify document titles and section headings from corroboratin
 - **WHEN** a body paragraph is larger or more widely spaced than surrounding text but has no corroborating heading cues
 - **THEN** the paragraph remains in a `<p>` element and is not promoted to `<h2>` or `<h3>`
 
-#### Scenario: Keep a wrapped document title as one heading
-- **WHEN** the document title wraps across multiple PDF lines but remains one logical title
-- **THEN** all title text is rendered in one `<h1>` with spaces between the wrapped lines, not split into separate heading levels
-
-#### Scenario: Keep a wrapped section headline as one heading
-- **WHEN** a top-level headline wraps across multiple PDF lines but remains one logical heading
-- **THEN** all headline text is rendered in one `<h2>` with spaces between the wrapped lines
-
 #### Scenario: Keep lower-level heading candidates as paragraphs
 - **WHEN** typography and layout would classify a line below the supported `<h3>` level
 - **THEN** its text is rendered as a paragraph and no `<h4>` element is emitted
@@ -156,6 +151,17 @@ The system SHALL identify document titles and section headings from corroboratin
 #### Scenario: Keep Sponsr body blocks distinct after a recovered filename headline
 - **WHEN** a Sponsr PDF has an image-only `[Философское]` headline recovered from its filename, followed by a bold disclaimer, ordinary paragraphs, an indented notice, and more article text
 - **THEN** the headline is the first `<h1>`, the disclaimer remains a paragraph with `<strong>`, ordinary text remains in `<p>` elements, the notice is grouped in one `<blockquote>`, and body text is not promoted to `<h2>` or `<h3>` based on font size alone
+
+### Requirement: Combine wrapped heading lines
+Visual continuation lines of one logical heading SHALL be combined with whitespace between words.
+
+#### Scenario: Keep a wrapped document title as one heading
+- **WHEN** the document title wraps across multiple PDF lines but remains one logical title
+- **THEN** all title text is rendered in one `<h1>` with spaces between the wrapped lines, not split into separate heading levels
+
+#### Scenario: Keep a wrapped section headline as one heading
+- **WHEN** a top-level headline wraps across multiple PDF lines but remains one logical heading
+- **THEN** all headline text is rendered in one `<h2>` with spaces between the wrapped lines
 
 ### Requirement: Preserve bold and italic PDF styling
 The system SHALL represent bold text with `<strong>` and italic text with `<em>`, including both tags when a text run has both styles, while leaving normally styled text unwrapped. Adjacent text runs with the same style SHALL be merged into continuous semantic tags within a paragraph or heading, including when separated only by a whitespace run; spaces and actual block boundaries SHALL be preserved.
