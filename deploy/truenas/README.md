@@ -43,6 +43,16 @@ docker compose --env-file .env -f compose.yaml up -d
 
 For a pinned release, set `IMAGE_TAG` in `.env` to its version tag, such as `v1.2.3`, then run the same pull and `up -d` commands. Record the prior image tag before upgrading.
 
+## View API logs
+
+The API writes structured JSON events, one per line, to stdout. Docker collects that stream as the container logs for the `api` service defined in `compose.yaml`. Follow the log stream from the deployment directory:
+
+```sh
+docker compose --env-file .env -f compose.yaml logs -f api
+```
+
+The `api` argument is the Compose service name. Omit `-f` to print the collected logs and exit, or add `--tail 200` to limit the initial output. If your Compose command already picks up `.env` and `compose.yaml` automatically, the equivalent command is `docker compose logs -f api`.
+
 ## Database upgrades and recovery
 
 The API applies embedded, ordered SQLx migrations during startup before it binds the HTTP port. Every schema change must add a migration under `migrations/` and preserve existing data. If a migration fails, the API exits instead of serving against a schema it cannot use.

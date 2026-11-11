@@ -2,6 +2,9 @@ import { useEffect, useState } from "react"
 import { ArrowLeft, ExternalLink, FileText, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Feed, type Month, type SourceDocument, type Year } from "@/lib/api"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,8 +28,9 @@ export function PdfReview({ feeds, initialSelection, onBack, onInvalidSelection,
   const [documents, setDocuments] = useState<SourceDocument[]>([])
   const [loading, setLoading] = useState(Boolean(initialSelection?.monthId))
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [savingId, setSavingId] = useState<string | null>(null)
-  const [saveError, setSaveError] = useState<{ id: string; message: string } | null>(null)
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set())
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let mounted = true
@@ -103,23 +107,24 @@ export function PdfReview({ feeds, initialSelection, onBack, onInvalidSelection,
 
   async function changeDecision(document: SourceDocument, value: string) {
     const override = value === "automatic" ? null : value as "include" | "exclude"
-    setSavingId(document.id)
-    setSaveError(null)
+    setSavingIds((current) => new Set(current).add(document.id))
+    setSaveErrors((current) => ({ ...current, [document.id]: "" }))
     try {
       await api.setPromotion(document.id, override)
       setDocuments((current) => current.map((item) => item.id === document.id ? { ...item, promotional_override: override } : item))
       toast.success("Publication decision saved", { description: document.filename })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save the publication decision."
-      setSaveError({ id: document.id, message })
+      setSaveErrors((current) => ({ ...current, [document.id]: message }))
       toast.error("Could not save publication decision", { description: message })
     } finally {
-      setSavingId(null)
+      setSavingIds((current) => { const next = new Set(current); next.delete(document.id); return next })
     }
   }
 
   async function retryExtraction(document: SourceDocument) {
     if (!monthId) return
+    setRetryingIds((current) => new Set(current).add(document.id))
     try {
       await api.extractDocument(document.id, true)
       const updated = await api.documents(monthId)
@@ -127,64 +132,64 @@ export function PdfReview({ feeds, initialSelection, onBack, onInvalidSelection,
       toast.success("PDF extraction complete", { description: document.filename })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not extract this PDF.")
-    }
+    } finally { setRetryingIds((current) => { const next = new Set(current); next.delete(document.id); return next }) }
   }
 
   const selectedFeed = feeds.find((feed) => feed.id === feedId)
   const selectedMonth = months.find((item) => item.id === monthId)
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <Button aria-label="Back to feeds" onClick={onBack} size="icon" variant="outline"><ArrowLeft aria-hidden="true" /></Button>
-          <div><p className="mb-1 text-sm text-muted-foreground">Publication controls</p><h1 className="text-2xl font-semibold tracking-tight">PDF review</h1><p className="mt-1 text-sm text-muted-foreground">Review extracted content and choose which documents appear in the feed.</p></div>
+          <div><h1>PDF review</h1><p className="mt-1 text-sm text-muted-foreground">Review extracted content and choose which documents appear in the feed.</p></div>
         </div>
-        {selectedFeed && year !== null && selectedMonth && <Badge variant="outline">{selectedFeed.display_name} · {year} · {monthNames[selectedMonth.month - 1] ?? `Month ${selectedMonth.month}`}</Badge>}
+        {selectedFeed && year !== null && selectedMonth && <Badge className="h-auto max-w-full min-w-0 whitespace-normal break-words" variant="outline">{selectedFeed.display_name} · {year} · {monthNames[selectedMonth.month - 1] ?? `Month ${selectedMonth.month}`}</Badge>}
       </div>
 
       <Card>
         <CardHeader><CardTitle>Choose a source</CardTitle><CardDescription>Browse discovered documents by feed, year, and month.</CardDescription></CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
-          <label className="space-y-1.5 text-xs font-medium">Feed
-            <select aria-label="Feed" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" onChange={(event) => { const nextFeedId = event.target.value; setFeedId(nextFeedId); setYear(null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextFeedId ? { feedId: nextFeedId } : null) }} value={feedId}>
+        <CardContent><FieldGroup className="grid gap-4 sm:grid-cols-3">
+          <Field><FieldLabel htmlFor="review-feed">Feed</FieldLabel>
+            <select id="review-feed" aria-label="Feed" className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" onChange={(event) => { const nextFeedId = event.target.value; setFeedId(nextFeedId); setYear(null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextFeedId ? { feedId: nextFeedId } : null) }} value={feedId}>
               <option value="">Choose a feed</option>
               {feeds.map((feed) => <option key={feed.id} value={feed.id}>{feed.display_name}</option>)}
             </select>
-          </label>
-          <label className="space-y-1.5 text-xs font-medium">Year
-            <select aria-label="Year" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={!feedId || hierarchyLoading} onChange={(event) => { const nextYear = event.target.value ? Number(event.target.value) : undefined; setYear(nextYear ?? null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextYear === undefined ? { feedId } : { feedId, year: nextYear }) }} value={year ?? ""}>
+          </Field>
+          <Field><FieldLabel htmlFor="review-year">Year</FieldLabel>
+            <select id="review-year" aria-label="Year" className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={!feedId || hierarchyLoading} onChange={(event) => { const nextYear = event.target.value ? Number(event.target.value) : undefined; setYear(nextYear ?? null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextYear === undefined ? { feedId } : { feedId, year: nextYear }) }} value={year ?? ""}>
               <option value="">{hierarchyLoading ? "Loading years…" : "Choose a year"}</option>
               {years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>)}
             </select>
-          </label>
-          <label className="space-y-1.5 text-xs font-medium">Month
-            <select aria-label="Month" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={year === null || hierarchyLoading} onChange={(event) => { const nextMonthId = event.target.value; setMonthId(nextMonthId); setDocuments([]); setLoadError(null); setLoading(Boolean(nextMonthId)); onSelectionChange?.(nextMonthId ? { feedId, year: year!, monthId: nextMonthId } : { feedId, year: year! }) }} value={monthId}>
+          </Field>
+          <Field><FieldLabel htmlFor="review-month">Month</FieldLabel>
+            <select id="review-month" aria-label="Month" className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={year === null || hierarchyLoading} onChange={(event) => { const nextMonthId = event.target.value; setMonthId(nextMonthId); setDocuments([]); setLoadError(null); setLoading(Boolean(nextMonthId)); onSelectionChange?.(nextMonthId ? { feedId, year: year!, monthId: nextMonthId } : { feedId, year: year! }) }} value={monthId}>
               <option value="">{hierarchyLoading ? "Loading months…" : "Choose a month"}</option>
               {months.map((item) => <option key={item.id} value={item.id}>{monthNames[item.month - 1] ?? `Month ${item.month}`}</option>)}
             </select>
-          </label>
-        </CardContent>
+          </Field>
+        </FieldGroup></CardContent>
       </Card>
 
       {!monthId ? <Card><CardContent className="py-12 text-center"><FileText className="mx-auto size-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{hierarchyLoading ? "Loading source folders…" : "Choose a month to review its PDFs"}</p></CardContent></Card>
         : <Card>
           <CardHeader><CardTitle>Discovered PDFs</CardTitle><CardDescription>Publication overrides take precedence over automatic promotion classification.</CardDescription></CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="flex flex-col gap-3">
             {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading documents…</p>}
-            {loadError && <p className="rounded-md bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">{loadError}</p>}
-            {!loading && !loadError && documents.length === 0 && <div className="rounded-lg border border-dashed px-5 py-10 text-center"><FileText className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-medium">No PDFs found</p><p className="mt-1 text-sm text-muted-foreground">Scan this folder from feed management to discover documents.</p></div>}
+            {loadError && <Alert variant="destructive"><AlertDescription>{loadError}</AlertDescription></Alert>}
+            {!loading && !loadError && documents.length === 0 && <Empty><EmptyHeader><EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia><EmptyTitle>No PDFs found</EmptyTitle><EmptyDescription>Scan this folder from feed management to discover documents.</EmptyDescription></EmptyHeader></Empty>}
             {documents.map((document) => {
-              const effective = document.promotional_override ?? document.promotional_classification
+              const classification = document.promotional_classification
               const status = document.extraction_status.toLowerCase()
-              return <article className="grid min-w-0 gap-4 rounded-xl border p-4 sm:grid-cols-[minmax(0,1fr)_minmax(200px,0.55fr)] sm:items-center" key={document.id}>
+              return <article className="grid min-w-0 gap-4 rounded-xl border p-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,0.55fr)] lg:items-center" key={document.id}>
                 <div className="min-w-0">
-                  <div className="flex min-w-0 items-start gap-3"><div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText aria-hidden="true" className="size-4" /></div><div className="min-w-0 flex-1"><h2 className="break-words text-sm font-medium">{document.filename}</h2><div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant={status === "success" ? "secondary" : status === "failure" ? "destructive" : "outline"}>Extraction {document.extraction_status}</Badge><Badge variant={effective === "publish" || effective === "include" ? "secondary" : "outline"}>{classificationLabel[effective] ?? effective}</Badge></div></div></div>
+                  <div className="flex min-w-0 items-start gap-3"><div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText aria-hidden="true" className="size-4" /></div><div className="min-w-0 flex-1"><h2 className="break-words text-sm font-medium">{document.filename}</h2><div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant={status === "success" ? "secondary" : status === "failure" ? "destructive" : "outline"}>Extraction {document.extraction_status}</Badge><Badge variant={classification === "publish" ? "secondary" : "outline"}>{classificationLabel[classification] ?? classification}</Badge></div></div></div>
                   {document.last_error && <p className="ml-12 mt-2 break-words text-xs text-destructive">{document.last_error}</p>}
                   <a className="ml-12 mt-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline" href={api.documentSourceUrl(document.id)} rel="noreferrer" target="_blank">View source PDF <ExternalLink aria-hidden="true" className="size-3" /></a>
-                  {status !== "success" && <Button className="ml-9 mt-2" onClick={() => void retryExtraction(document)} size="sm" variant="ghost"><RefreshCw aria-hidden="true" />Retry extraction</Button>}
+                  {status !== "success" && <Button className="ml-9 mt-2" disabled={retryingIds.has(document.id)} onClick={() => void retryExtraction(document)} size="sm" variant="ghost"><RefreshCw aria-hidden="true" />{retryingIds.has(document.id) ? "Extracting…" : "Retry extraction"}</Button>}
                 </div>
-                <div className="space-y-1.5"><label className="text-xs font-medium" htmlFor={`decision-${document.id}`}>Publication decision</label><select aria-label={`Publication decision for ${document.filename}`} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled={savingId === document.id} id={`decision-${document.id}`} onChange={(event) => void changeDecision(document, event.target.value)} value={document.promotional_override ?? "automatic"}><option value="automatic">Automatic · {classificationLabel[document.promotional_classification] ?? document.promotional_classification}</option><option value="include">Include in feed</option><option value="exclude">Exclude from feed</option></select>{savingId === document.id && <p className="text-xs text-muted-foreground">Saving decision…</p>}{saveError?.id === document.id && <p className="text-xs text-destructive" role="alert">{saveError.message}</p>}</div>
+                <div className="flex flex-col gap-1.5"><label className="text-sm font-medium" htmlFor={`decision-${document.id}`}>Publication decision</label><select aria-label={`Publication decision for ${document.filename}`} className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled={savingIds.has(document.id)} id={`decision-${document.id}`} onChange={(event) => void changeDecision(document, event.target.value)} value={document.promotional_override ?? "automatic"}><option value="automatic">Automatic · {classificationLabel[document.promotional_classification] ?? document.promotional_classification}</option><option value="include">Include in feed</option><option value="exclude">Exclude from feed</option></select>{status !== "success" && <p className="text-xs text-muted-foreground">Successful extraction is required before this PDF can appear in the feed.</p>}{savingIds.has(document.id) && <p role="status" className="text-xs text-muted-foreground">Saving decision…</p>}{saveErrors[document.id] && <p className="text-xs text-destructive" role="alert">{saveErrors[document.id]}</p>}</div>
               </article>
             })}
           </CardContent>

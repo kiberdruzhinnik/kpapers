@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { BookOpenText, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, ShieldCheck } from "lucide-react"
+import { BookOpenText, CheckCircle2, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, ShieldCheck } from "lucide-react"
 import { BrowserRouter, Link, useLocation, useNavigate } from "react-router-dom"
 import { ApiError, api, type Feed, type OverviewSummary } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Toaster } from "@/components/ui/sonner"
 import { CreateFeed, FeedManagement } from "@/components/feeds/FeedManagement"
 import { PdfReview } from "@/components/documents/PdfReview"
+import { cn } from "@/lib/utils"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 
 type SessionState = "checking" | "signed-out" | "signed-in"
@@ -25,12 +27,12 @@ const navItems: { label: Section; description: string; icon: typeof LayoutDashbo
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+      <div className="flex size-9 items-center justify-center rounded-lg bg-brand text-primary-foreground">
         <Command aria-hidden="true" className="size-4" strokeWidth={2.4} />
       </div>
       {!compact && <div className="leading-tight">
         <div className="font-semibold tracking-tight">Kpapers</div>
-        <div className="mt-1 text-[11px] text-muted-foreground">OPERATOR DESK</div>
+
       </div>}
     </div>
   )
@@ -109,12 +111,12 @@ export function SignInPanel({ onSubmit, error, pending }: {
             <CardDescription>Sign in to manage author feeds and source folders.</CardDescription>
           </CardHeader>
           <CardContent className="px-7 pb-7">
-            <form className="space-y-5" onSubmit={submit}>
-              <div className="space-y-2">
+            <form className="flex flex-col gap-5" onSubmit={submit}>
+              <div className="flex flex-col gap-2">
                 <Label htmlFor="username">Username</Label>
                 <Input id="username" name="username" autoComplete="username" autoCapitalize="none" required autoFocus />
               </div>
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="password">Password</Label>
                   <span className="text-xs text-muted-foreground">Operator access</span>
@@ -143,14 +145,14 @@ function Navigation({ section, onNavigate, onSelect, collapsed = false }: {
   collapsed?: boolean
 }) {
   return (
-    <nav aria-label="Primary navigation" className="space-y-1">
+    <nav aria-label="Primary navigation" className="flex flex-col gap-1">
       <p className={`px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground ${collapsed ? "sr-only" : ""}`}>Workspace</p>
       {navItems.map(({ label, description, icon: Icon }) => (
         <button
           key={label}
           aria-current={section === label ? "page" : undefined}
           aria-label={`${label} — ${description}`}
-          className={`flex w-full items-center ${collapsed ? "justify-center px-2" : "gap-3 px-3 text-left"} rounded-lg py-2.5 text-sm transition-colors ${section === label ? "bg-primary/8 font-medium text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          className={cn("flex w-full items-center rounded-lg py-2.5 text-sm transition-colors", collapsed ? "justify-center px-2" : "gap-3 px-3 text-left", section === label ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
           title={collapsed ? label : undefined}
           onClick={() => { onNavigate(label); onSelect?.() }}
           type="button"
@@ -164,9 +166,10 @@ function Navigation({ section, onNavigate, onSelect, collapsed = false }: {
   )
 }
 
-export function DashboardShell({ children, onLogout, feedCount = 0, section, onSectionChange }: {
+export function DashboardShell({ children, onLogout, section, onSectionChange, breadcrumb }: {
   children: React.ReactNode
   onLogout: () => void
+  breadcrumb?: React.ReactNode
   feedCount?: number
   section: Section
   onSectionChange: (section: Section) => void
@@ -179,9 +182,9 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
   }, [sidebarCollapsed])
 
   return (
-    <div className="min-h-svh bg-muted/30 text-foreground">
+    <div className="min-h-svh bg-background text-foreground">
       <div className="flex min-h-svh">
-        <aside className={`hidden shrink-0 flex-col border-r bg-background py-5 transition-[width] md:flex ${sidebarCollapsed ? "w-[72px] px-2" : "w-[248px] px-4"}`}>
+        <aside className={`hidden shrink-0 flex-col border-r bg-card py-5 transition-[width] md:flex ${sidebarCollapsed ? "w-[72px] px-2" : "w-[240px] px-4"}`}>
           <div className={`flex items-start pb-8 ${sidebarCollapsed ? "flex-col items-center gap-3" : "justify-between gap-2 px-2"}`}>
             <Link aria-label="Kpapers overview" to="/manage/"><Brand compact={sidebarCollapsed} /></Link>
             <Button aria-expanded={!sidebarCollapsed} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} size="icon" title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} variant="ghost">
@@ -189,20 +192,12 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
             </Button>
           </div>
           <Navigation collapsed={sidebarCollapsed} section={section} onNavigate={onSectionChange} />
-          <div className={`mt-7 ${sidebarCollapsed ? "flex justify-center" : "px-3"}`}>
-            <div className={`pb-2 ${sidebarCollapsed ? "sr-only" : "flex items-center justify-between"}`}>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Your feeds</span>
-              {!sidebarCollapsed && <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{feedCount}</span>}
-            </div>
-            {sidebarCollapsed
-              ? <span aria-label={`${feedCount} active feeds`} className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">{feedCount}</span>
-              : feedCount === 0 && <p className="text-xs leading-relaxed text-muted-foreground">Your author feeds will appear here.</p>}
-          </div>
+
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-background/95 px-4 backdrop-blur supports-backdrop-filter:bg-background/80 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-3">
+          <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-card/95 px-4 backdrop-blur supports-backdrop-filter:bg-card/80 sm:px-6 lg:px-8">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
                 <SheetTrigger asChild>
                   <Button aria-label="Open navigation" className="md:hidden" size="icon" variant="ghost"><Menu aria-hidden="true" /></Button>
@@ -212,20 +207,20 @@ export function DashboardShell({ children, onLogout, feedCount = 0, section, onS
                   <Navigation section={section} onNavigate={onSectionChange} onSelect={() => setMenuOpen(false)} />
                 </SheetContent>
               </Sheet>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground">
                 <span className="hidden sm:inline">Workspace</span><span className="hidden text-border sm:inline">/</span>
-                <span className="font-medium text-foreground">{section}</span>
+                <span className="font-medium text-foreground">{section}</span>{breadcrumb}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <div className="hidden items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 sm:flex">
                 <div className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">OP</div>
                 <span className="text-xs font-medium">Operator</span>
               </div>
-              <Button onClick={onLogout} size="sm" variant="ghost"><LogOut aria-hidden="true" /> <span className="hidden sm:inline">Sign out</span></Button>
+              <Button aria-label="Sign out" onClick={onLogout} size="sm" variant="ghost"><LogOut aria-hidden="true" /> <span className="hidden sm:inline">Sign out</span></Button>
             </div>
           </header>
-          <main aria-live="polite" className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-7 sm:px-6 sm:py-8 lg:px-10">
+          <main aria-live="polite" className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-7 sm:px-6 sm:py-8 lg:px-8">
             {children}
           </main>
         </div>
@@ -242,55 +237,52 @@ function Overview({ feedCount, onNavigate, onCreate, summary, summaryLoading, su
   summaryLoading: boolean
   summaryError: string | null
 }) {
-  const metric = (value: number | undefined) => summaryLoading ? "Loading…" : summaryError || value === undefined ? "Unavailable" : value.toLocaleString()
-
+  const unavailable = Boolean(summaryError) || !summary
+  const reviewCount = summary?.needs_review_count
+  const metrics = [
+    { label: "Active feeds", value: feedCount, icon: Rss, description: "Author channels available to subscribers" },
+    { label: "Source folders", value: summary?.source_folder_count, icon: Files, description: "Configured source folders for active feeds", testId: "source-folder-count" },
+    { label: "Needs review", value: reviewCount, icon: BookOpenText, description: "PDFs with incomplete or failed classification processing", testId: "needs-review-count" },
+  ]
   return (
-    <div className="space-y-7">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div><p className="mb-2 text-sm text-muted-foreground">Your publishing workspace</p><h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">Overview</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">Manage author feeds, keep source folders organized, and review documents before they reach readers.</p></div>
-        <Button onClick={onCreate}><Plus aria-hidden="true" /> Create feed</Button>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><h1>Overview</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">Manage your feeds, source folders, and documents from one place.</p></div>
+        <Button onClick={onCreate}><Plus aria-hidden="true" data-icon="inline-start" />Create feed</Button>
       </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {metrics.map(({ label, value, icon: Icon, description, testId }, index) => <Card key={label} className={cn("min-h-[140px] gap-3 [--card-spacing:--spacing(4)] sm:[--card-spacing:--spacing(4)]", index === 2 && "sm:col-span-2 lg:col-span-1")}>
+          <CardHeader className="flex flex-row items-start justify-between gap-3"><CardDescription>{label}</CardDescription><Icon aria-hidden="true" className="size-4 text-muted-foreground" /></CardHeader>
+          <CardContent className="flex flex-col gap-2"><div className="text-[30px] font-semibold leading-9 tabular-nums" data-testid={testId}>
+            {index !== 0 && summaryLoading ? <><span className="sr-only">Loading…</span><Skeleton className="h-9 w-16" /></> : index !== 0 && unavailable ? <span className="text-base">Unavailable</span> : value?.toLocaleString()}
+          </div><p className="text-xs text-muted-foreground">{description}</p></CardContent>
+        </Card>)}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div><CardDescription>Active feeds</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums">{feedCount}</CardTitle></div>
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/8 text-primary"><Rss aria-hidden="true" className="size-4" /></div>
-          </CardHeader>
-          <CardContent><p className="text-xs text-muted-foreground">Author channels available to subscribers</p></CardContent>
+          <CardHeader><CardTitle>{feedCount ? "Publishing workflow" : "Get started"}</CardTitle><CardDescription>{feedCount ? "Keep your publishing workspace moving." : "Create your first author feed, then connect its source folders."}</CardDescription></CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {feedCount === 0 && <Button className="self-start" onClick={onCreate}><Plus aria-hidden="true" data-icon="inline-start" />Create your first feed</Button>}
+            {[
+              { title: "Manage feeds", body: "View author channels and feed details.", section: "Feeds" as Section, icon: Rss },
+              { title: "Connect source folders", body: "Add years and link folders containing PDFs.", section: "Feeds" as Section, icon: Files },
+              { title: "Review PDFs", body: "Choose which documents appear in your feeds.", section: "PDF review" as Section, icon: BookOpenText },
+            ].map(({title, body, section, icon: Icon}) => <Button className="h-auto min-h-16 w-full justify-start gap-3 whitespace-normal px-3 py-3 text-left" key={title} onClick={() => onNavigate(section)} variant="ghost">
+              <Icon aria-hidden="true" data-icon="inline-start" /><span className="min-w-0 flex-1"><span className="block">{title}</span><span className="mt-1 block text-sm font-normal text-muted-foreground">{body}</span></span><ChevronDown aria-hidden="true" data-icon="inline-end" className="-rotate-90" />
+            </Button>)}
+          </CardContent>
         </Card>
         <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div><CardDescription>Source folders</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums" data-testid="source-folder-count">{metric(summary?.source_folder_count)}</CardTitle></div>
-            <div className="flex size-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600"><Files aria-hidden="true" className="size-4" /></div>
-          </CardHeader>
-          <CardContent><p className="text-xs text-muted-foreground">Configured source folders for active feeds</p>{summaryError && <p className="mt-1 text-xs text-destructive">Count unavailable</p>}</CardContent>
-        </Card>
-        <Card className="sm:col-span-2 xl:col-span-1">
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div><CardDescription>Needs review</CardDescription><CardTitle className="mt-2 text-3xl tabular-nums" data-testid="needs-review-count">{metric(summary?.needs_review_count)}</CardTitle></div>
-            <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500/10 text-amber-700"><BookOpenText aria-hidden="true" className="size-4" /></div>
-          </CardHeader>
-          <CardContent><p className="text-xs text-muted-foreground">PDFs with incomplete or failed classification processing</p>{summaryError && <p className="mt-1 text-xs text-destructive">Count unavailable</p>}</CardContent>
+          <CardHeader><CardTitle>Review queue</CardTitle><CardDescription>Documents needing your attention.</CardDescription></CardHeader>
+          <CardContent className="flex flex-col items-start gap-4">
+            {summaryLoading ? <div role="status" className="flex w-full flex-col gap-3"><span className="sr-only">Loading review queue…</span><Skeleton className="h-5 w-4/5" /><Skeleton className="h-4 w-3/5" /></div>
+              : unavailable ? <p role="status" className="text-sm text-muted-foreground">Review queue unavailable. Try reloading the page.</p>
+              : reviewCount === 0 ? <div className="flex items-start gap-2 text-success"><CheckCircle2 aria-hidden="true" className="mt-0.5 size-5 shrink-0" /><div><p className="text-sm font-medium">No documents need attention</p><p className="mt-1 text-xs text-muted-foreground">The review queue is empty.</p></div></div>
+              : <p className="text-sm font-medium">{reviewCount} {reviewCount === 1 ? "document needs" : "documents need"} attention</p>}
+            <Button onClick={() => onNavigate("PDF review")} variant="outline">Open PDF review</Button>
+          </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader className="flex-row flex-wrap items-start justify-between gap-3">
-          <div><CardTitle>Get started</CardTitle><CardDescription className="mt-1.5">Set up your first author feed in a few steps.</CardDescription></div>
-          <Button onClick={() => onNavigate("Feeds")} variant="outline">View feeds <ChevronDown aria-hidden="true" className="-rotate-90" /></Button>
-        </CardHeader>
-        <CardContent className="grid gap-4 border-t pt-5 md:grid-cols-3">
-          {[
-            { icon: Plus, title: "Create a feed", body: "Add an author name and description for the public channel." },
-            { icon: Files, title: "Connect folders", body: "Add years and link only months that have a source folder." },
-            { icon: BookOpenText, title: "Review documents", body: "Check discovered PDFs and choose what readers can see." },
-          ].map(({ icon: Icon, title, body }, index) => <div className="flex gap-3" key={title}>
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground"><Icon aria-hidden="true" className="size-4" /></div>
-            <div className="min-w-0"><p className="text-sm font-medium"><span className="mr-2 text-xs text-muted-foreground">0{index + 1}</span>{title}</p><p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{body}</p></div>
-          </div>)}
-        </CardContent>
-      </Card>
     </div>
   )
 }
@@ -425,7 +417,7 @@ function AppContent() {
       <Toaster position="top-right" />
       {session === "signed-out"
         ? <SignInPanel error={authError} onSubmit={signIn} pending={loginPending} />
-        : <DashboardShell feedCount={feeds.filter((feed) => feed.active).length} onLogout={() => void signOut()} onSectionChange={(nextSection) => navigate(sectionPath(nextSection))} section={section}>
+        : <DashboardShell breadcrumb={section === "Feeds" && (route.creating || route.feedId) ? <><span aria-hidden="true">/</span><span className="max-w-40 truncate">{route.creating ? "Create a feed" : feeds.find((feed) => feed.id === route.feedId)?.display_name}</span></> : undefined} feedCount={feeds.filter((feed) => feed.active).length} onLogout={() => void signOut()} onSectionChange={(nextSection) => navigate(sectionPath(nextSection))} section={section}>
           {section === "Overview"
             ? <Overview onCreate={() => navigate("/manage/feeds/new")} feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
             : section === "Feeds"
