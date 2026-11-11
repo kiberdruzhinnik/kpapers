@@ -24,6 +24,7 @@ fi
 printf 'This permanently deletes the kpapers-quickstart database, cached files, local images, and generated credentials.\n'
 # An empty, explicit env file prevents Compose from reading the deployment's .env.
 OPERATOR_PASSWORD_HASH=cleanup SESSION_SIGNING_KEY=01234567890123456789012345678901 \
+  API_URL=http://api:8080 \
   "${DOCKER[@]}" compose -f "$COMPOSE_FILE" --env-file /dev/null -p "$PROJECT" \
   down --volumes --remove-orphans --rmi local
 rm -f -- "$ENV_FILE"

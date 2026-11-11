@@ -26,17 +26,31 @@ pub async fn run(pool: SqlitePool) {
     let mut ticker = tokio::time::interval(Duration::from_secs(5));
     loop {
         ticker.tick().await;
-        if let Err(error) = schedule_due(&pool).await {
-            eprintln!("scheduler enqueue failed: {error}");
-        }
-        loop {
-            match process_one(&pool).await {
-                Ok(true) => continue,
-                Ok(false) => break,
-                Err(error) => {
-                    eprintln!("scheduler job failed: {error}");
-                    break;
-                }
+        run_tick(&pool).await;
+    }
+}
+
+async fn run_tick(pool: &SqlitePool) {
+    if let Err(error) = schedule_due(pool).await {
+        tracing::error!(
+            event = "scheduler_enqueue_failed",
+            operation = "enqueue_due_refreshes",
+            error = %error,
+            "scheduler enqueue failed"
+        );
+    }
+    loop {
+        match process_one(pool).await {
+            Ok(true) => continue,
+            Ok(false) => break,
+            Err(error) => {
+                tracing::error!(
+                    event = "scheduler_job_failed",
+                    operation = "process_refresh_job",
+                    error = %error,
+                    "scheduler job failed"
+                );
+                break;
             }
         }
     }
@@ -127,6 +141,7 @@ async fn process_one(pool: &SqlitePool) -> Result<bool, Box<dyn std::error::Erro
         let (result, error) = match month_result {
             Ok(()) => ("success", None),
             Err(e) => {
+                crate::logging::refresh_failed(&job.id, &job.scope, &job.feed_id, &month_id, &e);
                 errors.push(e.clone());
                 ("failure", Some(e))
             }
@@ -336,7 +351,19 @@ mod tests {
         sqlx::query("INSERT INTO refresh_jobs (id, scope, feed_id, year, month_id, force, status) VALUES ('job', 'month', 'feed', 2026, 'month', 0, 'queued')")
             .execute(&pool).await.unwrap();
 
-        assert!(process_one(&pool).await.unwrap());
+        let (processed, logs) = crate::test_support::capture_logs(process_one(&pool)).await;
+        assert!(processed.unwrap());
+        let events = crate::test_support::json_events(&logs);
+        let failure = events
+            .iter()
+            .find(|event| event["fields"]["event"] == "refresh_month_failed")
+            .expect("refresh failure event");
+        assert_eq!(failure["fields"]["job_id"], "job");
+        assert_eq!(failure["fields"]["scope"], "month");
+        assert_eq!(failure["fields"]["feed_id"], "feed");
+        assert_eq!(failure["fields"]["month_id"], "month");
+        assert_eq!(failure["fields"]["error"], "provider listing failed");
+        assert!(!logs.contains("fixture://missing"));
         let (status, error): (String, Option<String>) =
             sqlx::query_as("SELECT status, error FROM refresh_jobs WHERE id='job'")
                 .fetch_one(&pool)
@@ -355,6 +382,29 @@ mod tests {
         assert_eq!(fingerprint, "cached-v1");
         assert_eq!(text, "last good text");
         assert_eq!(html, "<p>last good text</p>");
+        crate::test_support::cleanup(pool, path).await;
+    }
+
+    #[tokio::test]
+    async fn scheduler_errors_are_structured_and_exclude_sensitive_values() {
+        let (pool, path) = crate::test_support::database().await;
+        pool.close().await;
+
+        let ((), logs) = crate::test_support::capture_logs(run_tick(&pool)).await;
+        let events = crate::test_support::json_events(&logs);
+        for name in ["scheduler_enqueue_failed", "scheduler_job_failed"] {
+            let event = events
+                .iter()
+                .find(|event| event["fields"]["event"] == name)
+                .unwrap_or_else(|| panic!("missing {name}: {logs}"));
+            assert!(
+                event["fields"]["operation"]
+                    .as_str()
+                    .is_some_and(|v| !v.is_empty())
+            );
+            assert!(event["fields"]["error"].as_str().is_some());
+        }
+        assert!(!logs.contains("sqlite://"));
         crate::test_support::cleanup(pool, path).await;
     }
 }

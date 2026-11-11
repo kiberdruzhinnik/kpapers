@@ -2,30 +2,75 @@ use axum::{
     Extension, Json, Router, middleware,
     routing::{delete, get, post, put},
 };
-use std::net::SocketAddr;
+use std::{net::SocketAddr, process::ExitCode};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     if args.any(|arg| arg == "--hash-password") {
-        use argon2::password_hash::{PasswordHasher, SaltString};
-        let mut password = String::new();
-        std::io::stdin().read_line(&mut password)?;
-        let salt = SaltString::generate(&mut rand::rngs::OsRng);
-        let hash = argon2::Argon2::default()
-            .hash_password(password.trim_end().as_bytes(), &salt)
-            .map_err(|error| error.to_string())?
-            .to_string();
-        println!("{hash}");
-        return Ok(());
+        return match hash_password() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("kpapers-api: {error}");
+                ExitCode::FAILURE
+            }
+        };
     }
     if std::env::args().any(|arg| arg == "--healthcheck") {
-        let response = reqwest::get("http://127.0.0.1:8080/healthz").await?;
-        if !response.status().is_success() {
-            return Err("API health check failed".into());
-        }
-        return Ok(());
+        return match healthcheck().await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("kpapers-api: {error}");
+                ExitCode::FAILURE
+            }
+        };
     }
+
+    logging::init();
+    match serve().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            logging::initialization_failed(error.as_ref());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn hash_password() -> Result<(), String> {
+    use argon2::password_hash::{PasswordHasher, SaltString};
+    let mut password = String::new();
+    std::io::stdin()
+        .read_line(&mut password)
+        .map_err(|error| format!("could not read password: {error}"))?;
+    let password = password.trim_end();
+    if password.is_empty() {
+        return Err("password must not be empty".to_owned());
+    }
+    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    let hash = argon2::Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|error| format!("could not hash password: {error}"))?
+        .to_string();
+    println!("{hash}");
+    Ok(())
+}
+
+async fn healthcheck() -> Result<(), String> {
+    let url = std::env::var("HEALTHCHECK_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080/healthz".to_owned());
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|error| format!("health check request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "API health check failed with status {}",
+            response.status()
+        ));
+    }
+    Ok(())
+}
+
+async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://kpapers.db?mode=rwc".to_owned());
     let pool = db::connect_and_migrate(&database_url).await?;
@@ -34,10 +79,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = app(pool, auth);
     let address = SocketAddr::from(([0, 0, 0, 0], 8080));
-    let listener = tokio::net::TcpListener::bind(address)
-        .await
-        .expect("bind API listener");
+    let listener = tokio::net::TcpListener::bind(address).await?;
 
+    logging::started(address);
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -146,6 +190,7 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
         .route("/documents/{document_id}/download", get(rss::download))
         .merge(management)
         .layer(Extension(auth))
+        .layer(middleware::from_fn(logging::request_log))
         .with_state(pool)
 }
 
@@ -167,6 +212,7 @@ struct HealthResponse {
 mod auth;
 mod db;
 mod feed_api;
+mod logging;
 mod pdf_processing;
 mod providers;
 mod rss;
@@ -371,6 +417,73 @@ mod tests {
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
         ));
+
+        test_support::cleanup(pool, path).await;
+    }
+
+    #[tokio::test]
+    async fn request_logging_records_completion_without_credentials_or_query_strings() {
+        let (pool, path) = test_support::database().await;
+        let app = app(
+            pool.clone(),
+            auth::test_auth_config("operator", "correct horse"),
+        );
+
+        let ((), logs) = test_support::capture_logs(async {
+            let login = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/login?password=query-secret")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            r#"{"username":"operator","password":"body-secret"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(login.status(), StatusCode::UNAUTHORIZED);
+
+            let overview = app
+                .oneshot(
+                    Request::get(
+                        "/api/management/overview?password=query-secret&token=query-token",
+                    )
+                    .header(header::COOKIE, "kpapers_session=session-secret")
+                    .header(header::AUTHORIZATION, "Bearer bearer-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(overview.status(), StatusCode::UNAUTHORIZED);
+        })
+        .await;
+
+        let events = test_support::json_events(&logs);
+        let requests: Vec<_> = events
+            .iter()
+            .filter(|event| event["fields"]["event"] == "http_request")
+            .collect();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["fields"]["method"], "POST");
+        assert_eq!(requests[0]["fields"]["path"], "/api/login");
+        assert_eq!(requests[1]["fields"]["method"], "GET");
+        assert_eq!(requests[1]["fields"]["path"], "/api/management/overview");
+        for event in requests {
+            assert_eq!(event["fields"]["status"], 401);
+            assert!(event["fields"]["duration_ms"].is_u64());
+        }
+        for secret in [
+            "query-secret",
+            "query-token",
+            "session-secret",
+            "bearer-secret",
+            "body-secret",
+            "?",
+        ] {
+            assert!(!logs.contains(secret), "log leaked {secret}: {logs}");
+        }
 
         test_support::cleanup(pool, path).await;
     }

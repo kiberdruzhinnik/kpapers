@@ -1,0 +1,47 @@
+# Connected page design plan
+
+Status: All three prompts and the selected 19-file source export were approved by the user. Generation complete; corrected version 2 drafts are linked in PAGE-DESIGNS.md and remain pending visual review. Approved Option A is the source style. Production application code remains untouched.
+
+One connected draft per requested page; three drafts total, not additional style alternatives. All inherit the approved shell, colors, typography and responsive behavior.
+
+## Feeds — Option A
+
+Route: `/manage/feeds`
+
+Inherit approved Option A exactly: 240px desktop sidebar collapsing to 72px, 64px header, max 1200px content, Geist Variable explicitly loaded, Lucide Command mark and Kpapers wordmark, light zinc/white surfaces, blue #2563eb primary, blue-50 selected nav, 12px cards and 8px buttons. Reuse shadcn/ui patterns. Below 768px provide working accessible modal navigation, stack panels with 16px gutters and 44px touch targets. Include named icon controls, visible focus, reduced motion, readable status labels. No backend calls from prototype. Preserve original workflow semantics, no analytics, bulk actions, global search, new settings, or unsupported functionality. Use only clearly labelled sample data (a small Example data label) to demonstrate populated workflows, never imply production data. Hash navigation is allowed for prototype, with application routes recorded in data-route. Use ONLY the fonts, colors, spacing, and component styles defined in the design system. Do not introduce any fonts, colors, or visual styles not in the design system. Create Feeds at /manage/feeds with Feeds active in sidebar. Heading and short purpose, blue Create feed links /manage/feeds/new. Desktop master-detail: narrow feed selection list with active/archived grouping and one selected example feed; wider detail panel with author name, description, active badge, stable RSS address /feeds/example-feed, Copy RSS address, Refresh feed, Edit details and Archive. Show years/source folders with Add year; independently collapsible year rows initially collapsed, opening to distinctly grouped Link a month form (month selector plus supported public folder URL and Link month) and configured month cards. Include a collapsed 2026 year and working expansion so month interface can be reviewed. Month detail separates source URL, last attempt, next refresh and latest result from Fetch and parse, Refresh now, Review PDFs, Archive and separately confirmed Delete permanently. Use Never/Pending/Not run yet rather than invented timestamps. Preserve scope of feed/year/month refresh, archive/restore/delete. Provide archived state with Restore and permanent deletion via confirmation. Edit uses existing author name, optional description and optional refresh interval in hours fields. Keep page readable, use disclosure for secondary actions, avoid dozens of buttons competing. Below desktop widths stack list/detail; at mobile feed picker above detail, no cramped side-by-side hierarchy. Prototype interactions may reveal panels, toggle years, copy example RSS or open confirmation; no actual destructive operation or misleading saved success. No creation form embedded in this page.
+
+## Create a feed — Option A
+
+Route: `/manage/feeds/new`
+
+Inherit approved Option A exactly: 240px desktop sidebar collapsing to 72px, 64px header, max 1200px content, Geist Variable explicitly loaded, Lucide Command mark and Kpapers wordmark, light zinc/white surfaces, blue #2563eb primary, blue-50 selected nav, 12px cards and 8px buttons. Reuse shadcn/ui patterns. Below 768px provide working accessible modal navigation, stack panels with 16px gutters and 44px touch targets. Include named icon controls, visible focus, reduced motion, readable status labels. No backend calls from prototype. Preserve original workflow semantics, no analytics, bulk actions, global search, new settings, or unsupported functionality. Use only clearly labelled sample data (a small Example data label) to demonstrate populated workflows, never imply production data. Hash navigation is allowed for prototype, with application routes recorded in data-route. Use ONLY the fonts, colors, spacing, and component styles defined in the design system. Do not introduce any fonts, colors, or visual styles not in the design system. Create dedicated Create a feed page at /manage/feeds/new with Feeds active in sidebar and Workspace / Feeds / Create a feed breadcrumb. Constrained form width about 640px inside common shell, concise title and subtitle, one card with Author name required, Description optional textarea, Refresh interval optional numeric input with hours suffix and helper Leave blank to use the current and older month defaults. Only these three existing fields. Author name placeholder e.g. Ada Lovelace is illustrative, form initially empty. Footer Cancel outline leads /manage/feeds; blue Create feed primary. Brief neutral supporting note: source folders can be connected after creation; RSS identity remains stable when metadata changes. Do not add cloud URL, API key, avatar upload, tags, visibility, frequency presets or multistep wizard. Design visible required indication, inline errors linked with aria-describedby and a focusable linked error summary on invalid submit. Positive finite refresh hours when supplied, name trimmed and required; retain inputs on failure. Include pending/disabled state design. Prototype validation can run locally but successful submit must clearly report Preview only; no feed was created. Real success navigation contract is selected created feed /manage/feeds/:id. Mobile full-width fields, nonoverlapping stacked actions, 44px touch targets and keyboard access.
+
+## PDF review — Option A
+
+Route: `/manage/pdf-review`
+
+Inherit approved Option A exactly: 240px desktop sidebar collapsing to 72px, 64px header, max 1200px content, Geist Variable explicitly loaded, Lucide Command mark and Kpapers wordmark, light zinc/white surfaces, blue #2563eb primary, blue-50 selected nav, 12px cards and 8px buttons. Reuse shadcn/ui patterns. Below 768px provide working accessible modal navigation, stack panels with 16px gutters and 44px touch targets. Include named icon controls, visible focus, reduced motion, readable status labels. No backend calls from prototype. Preserve original workflow semantics, no analytics, bulk actions, global search, new settings, or unsupported functionality. Use only clearly labelled sample data (a small Example data label) to demonstrate populated workflows, never imply production data. Hash navigation is allowed for prototype, with application routes recorded in data-route. Use ONLY the fonts, colors, spacing, and component styles defined in the design system. Do not introduce any fonts, colors, or visual styles not in the design system. Create PDF review at /manage/pdf-review with PDF review active in sidebar. Heading, concise publication-control purpose and Back to feeds action. Card Choose a source with labelled dependent Feed, Year, Month selects, retaining selection context badge/breadcrumb. Preserve direct links /manage/pdf-review/:feedId/:year/:monthId and intermediate selections. Below show Discovered PDFs as readable document rows/cards, not a PDF editor or split viewer: filename, extraction status, effective classification, View source PDF, and labelled Publication decision Select. Exact decisions Automatic (show underlying classification), Include in feed, Exclude from feed. Automatic classification labels Suitable for publication, Promotional, Not classified; extraction states Success, Pending, Failure. Include three clearly labelled example documents to demonstrate successful article, promotional document excluded automatically, and failed extraction with error detail and Retry extraction. A manual Include choice does not mean published if extraction failed. External source action represents document-specific source URL, never containing folder; no real download needed. Distinguish classification and publication override. Show per-row pending save/error feedback and preserve prior choice on failure; preview controls demonstrate choice locally without claiming server persistence. Include empty/no-source/loading/failure state design in concise prototype disclosure or selectable state, not simultaneous contradictory panels. No global Refresh feed button replacing retry semantics, no batch approve, PDF upload, AI summary or fabricated analytics. On mobile stack filters and each row actions beneath filename; long names wrap and decisions remain usable.
+
+## Selected source context
+
+These 19 files (121 KiB total) will be sent to Superdesign. This extends the previously approved Overview context with the three page/hierarchy components and their UI primitives. No API implementation or credentials are included.
+
+- `.superdesign/design-system.md`
+- `web/src/App.tsx`
+- `web/src/index.css`
+- `web/src/components/ui/button.tsx`
+- `web/src/components/ui/card.tsx`
+- `web/src/components/ui/input.tsx`
+- `web/src/components/ui/label.tsx`
+- `web/src/components/ui/sheet.tsx`
+- `web/src/components/ui/sonner.tsx`
+- `web/src/lib/utils.ts`
+- `docs/design/DESIGN.md`
+- `web/src/components/feeds/FeedManagement.tsx`
+- `web/src/components/feeds/HierarchyManagement.tsx`
+- `web/src/components/documents/PdfReview.tsx`
+- `web/src/components/ui/badge.tsx`
+- `web/src/components/ui/alert-dialog.tsx`
+- `web/src/components/ui/textarea.tsx`
+- `web/src/components/ui/select.tsx`
+- `web/src/lib/datetime.ts`
