@@ -7,3 +7,5 @@ backups/
 
 .env.ui-e2e
 .tmp/
+.codex-attachments
+fuzz/target

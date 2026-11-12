@@ -1,0 +1,12 @@
+{
+  "projectId": "cc9adea7-1949-4c43-b5dc-7f46adfd97a1",
+  "canvasUrl": "https://superdesign.dev/teams/ca1be67e-af28-40ed-9861-534950838927/projects/cc9adea7-1949-4c43-b5dc-7f46adfd97a1",
+  "screenshotReferenceId": "de673d1d-bd92-4cf3-9420-b17cbe88dfcf",
+  "status": "option-a-approved",
+  "model": "gemini-3.1-pro",
+  "draftIds": [
+    "0d73a8e3-facf-4122-b8e2-a561e1812e08",
+    "9ec0f56b-b208-4d96-9a97-23fd38ded681"
+  ],
+  "activeDraftId": "0d73a8e3-facf-4122-b8e2-a561e1812e08"
+}
