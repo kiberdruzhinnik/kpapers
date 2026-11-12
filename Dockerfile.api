@@ -1,9 +1,22 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+
+# Compile dependencies against a stub binary so source-only changes can reuse
+# the dependency layer. The lockfile and toolchain image still invalidate it.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    mkdir -p src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo build --release --locked \
+    && rm -rf src
+
 COPY src ./src
 COPY migrations ./migrations
-RUN cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    find src -type f -exec touch {} + \
+    && cargo build --release --locked
 
 FROM debian:bookworm-slim AS pdfium
 ARG TARGETARCH

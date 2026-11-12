@@ -2,7 +2,9 @@ FROM mcr.microsoft.com/playwright:v1.65.0-noble
 
 WORKDIR /workspace
 COPY package.json package-lock.json ./
-RUN npm ci
+# The pinned Playwright base image already contains the matching browsers.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY playwright.config.ts ./
 COPY tests/browser ./tests/browser
 CMD ["npm", "run", "test:e2e"]
