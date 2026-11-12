@@ -113,10 +113,10 @@ The system SHALL present the protected operator workflows in a clean, responsive
 - **THEN** the dashboard communicates the failure and keeps the operator on a usable view from which the action can be retried
 
 ### Requirement: Provide direct URLs for dashboard views
-The dashboard SHALL represent the Overview, feed list, selected feed, PDF review selection, and selected PDF review month in browser URLs that can be opened directly and restored after reload.
+The dashboard SHALL represent Overview, feed list, selected feed, feed creation, PDF review selection, and selected PDF review month in directly openable browser URLs. Overview SHALL use `/manage/`. Feed list, selected feed, and creation SHALL use `/manage/feeds`, `/manage/feeds/<id>`, and `/manage/feeds/new`. PDF review SHALL use `/manage/pdf-review` with optional `/<feed-id>[/<year>[/<month-id>]]` selections. Public `/feeds/<id>` SHALL retain RSS behavior. Reloads SHALL restore the addressed view, without requiring restoration of unsaved form values.
 
 #### Scenario: Open a dashboard section directly
-- **WHEN** an authenticated operator opens a URL for Overview, the feed list, a selected feed, or PDF review
+- **WHEN** an authenticated operator opens a URL for Overview, the feed list, a selected feed, feed creation, or PDF review
 - **THEN** the dashboard displays the view represented by that URL
 
 #### Scenario: Restore a selected PDF review month
@@ -134,6 +134,30 @@ The dashboard SHALL represent the Overview, feed list, selected feed, PDF review
 #### Scenario: Open a URL for a missing selection
 - **WHEN** a URL refers to a feed, year, or month that is unavailable
 - **THEN** the dashboard shows a usable feed or PDF review view and communicates that the requested selection is unavailable
+
+#### Scenario: Open Overview and PDF review under the management prefix
+- **WHEN** an authenticated operator opens or reloads `/manage/` or `/manage/pdf-review` through the web server
+- **THEN** the dashboard displays Overview or PDF review respectively
+
+#### Scenario: Restore PDF review selection under the management prefix
+- **WHEN** an authenticated operator opens or reloads `/manage/pdf-review/<feed-id>/<year>/<month-id>`
+- **THEN** PDF review restores the selected feed, year, month, and its documents
+
+#### Scenario: Navigate dashboard links within the management prefix
+- **WHEN** the operator uses the brand link, section navigation, or PDF review selection controls
+- **THEN** the resulting dashboard URL uses `/manage/` and preserves the relevant selection
+
+#### Scenario: Reload feed management through the deployed web server
+- **WHEN** an authenticated operator opens or reloads `/manage/feeds/<id>` for an available feed through the web server
+- **THEN** the dashboard displays the selected feed instead of RSS XML
+
+#### Scenario: Fetch an existing RSS subscription URL
+- **WHEN** a reader fetches `/feeds/<id>` for an active published feed
+- **THEN** the server returns that feed's RSS channel at the same URL
+
+#### Scenario: Return from PDF review to feed management
+- **WHEN** the operator activates Back to feeds from a selected feed's PDF review
+- **THEN** the dashboard navigates to `/manage/feeds/<id>` for that feed
 
 ### Requirement: Remember the desktop sidebar state
 The dashboard SHALL let operators collapse or expand the desktop sidebar and persist that preference across browser reloads.
@@ -175,3 +199,110 @@ The Overview SHALL show the number of configured source folders and PDFs needing
 #### Scenario: Overview counts cannot be loaded
 - **WHEN** the dashboard cannot retrieve Overview counts
 - **THEN** it communicates that the counts are unavailable instead of displaying a placeholder that looks like a count
+
+### Requirement: Create feeds on a dedicated page
+The dashboard SHALL provide a protected feed creation page at `/manage/feeds/new`, reachable from Create feed controls on Overview and Feeds. It SHALL offer the existing author name, optional description, and optional refresh interval fields and validation. Feed management SHALL offer a creation link instead of an embedded creation form.
+
+#### Scenario: Start creation from Overview or Feeds
+- **WHEN** an authenticated operator activates Create feed on Overview or Feeds
+- **THEN** the dedicated creation page opens with the creation form
+
+#### Scenario: Create and configure a feed
+- **WHEN** the operator successfully submits valid feed details
+- **THEN** the system creates the feed and navigates to `/manage/feeds/<id>` for the created feed, ready for year and month configuration
+- **AND** the feed appears in the dashboard's feed list
+
+#### Scenario: Cancel feed creation
+- **WHEN** the operator activates Cancel on the creation page
+- **THEN** the dashboard returns to `/manage/feeds` without creating a feed
+
+#### Scenario: Correct a failed creation submission
+- **WHEN** validation fails or the creation request fails
+- **THEN** the creation page retains entered values and displays an error so the operator can correct or retry the submission
+
+#### Scenario: Open creation before sign-in
+- **WHEN** an unauthenticated visitor opens `/manage/feeds/new`
+- **THEN** the dashboard shows sign-in without exposing the creation form
+- **AND** successful sign-in opens the creation page
+
+### Requirement: Remember independently collapsible feed years
+The dashboard SHALL let the operator independently expand and collapse each feed year. A year with no saved preference SHALL start collapsed, including newly created years. The browser SHALL remember each feed/year preference across reloads and navigation. Collapsing SHALL hide month details and the month-linking form while leaving the year heading, status, and year actions visible.
+
+#### Scenario: View years without saved preferences
+- **WHEN** the operator opens a feed whose years have no saved expansion preferences
+- **THEN** every year is collapsed, including archived years
+
+#### Scenario: Remember mixed year states
+- **WHEN** the operator expands one year, leaves another collapsed, then reloads or leaves and returns to the feed
+- **THEN** each year restores its own expanded or collapsed state
+
+#### Scenario: Keep preferences separate across feeds
+- **WHEN** the operator expands a year in one feed and opens the same calendar year in another feed without a saved preference
+- **THEN** the second feed's year remains collapsed
+
+#### Scenario: Toggle a year using the keyboard
+- **WHEN** the operator focuses a year's expansion control and activates it with the keyboard
+- **THEN** the year toggles and its control exposes the current expanded state to assistive technology
+
+#### Scenario: Browser persistence is unavailable
+- **WHEN** browser storage is blocked or a saved preference is invalid
+- **THEN** the year view remains usable and defaults to collapsed for an unreadable preference
+- **AND** the operator can still expand and collapse years during that view
+
+### Requirement: Present the approved operator workspace
+The dashboard SHALL follow the approved layout, typography, colors, spacing, and responsive behavior in `docs/design/DESIGN.md`, with a persistent desktop sidebar and accessible mobile navigation.
+
+#### Scenario: Use the workspace across screen sizes
+- **WHEN** the operator visits any management screen at 320, 375, 768, 1024, or 1440px width or in landscape
+- **THEN** controls remain accessible, content wraps without horizontal overflow, and navigation retains its active route and saved collapse preference
+
+### Requirement: Present actionable publishing overview
+Overview SHALL show three actual metrics, publishing shortcuts, and a review queue that distinguishes loading, unavailable, clear, and attention states. First-feed onboarding SHALL appear only when no active feeds exist.
+
+#### Scenario: Existing feeds with a clear queue
+- **WHEN** active feeds exist and the review count is confirmed zero
+- **THEN** Overview shows publishing shortcuts and “No documents need attention” without first-feed setup instructions
+
+#### Scenario: Review data unavailable
+- **WHEN** the summary request fails
+- **THEN** the queue reports unavailable data and does not imply that all documents are clear
+
+### Requirement: Separate feed list and detail screens
+The feed list SHALL contain restrained feed rows grouped by Active and Archived tabs. Opening a row SHALL navigate to a separate detail screen with All feeds navigation, stable RSS address, metadata editing, and scoped management actions.
+
+#### Scenario: Open and edit a feed
+- **WHEN** the operator opens a feed from the list and saves edited metadata in a focused dialog
+- **THEN** the detail screen retains the feed identity and RSS address and reports the server outcome
+
+#### Scenario: Inspect archived feeds
+- **WHEN** the operator opens Archived
+- **THEN** archived rows offer restoration and separately confirmed permanent deletion without exposing hierarchy forms on the list
+
+### Requirement: Focus source management controls
+Feed detail SHALL show one Source folders section with Add year and independently collapsible years. Connect month SHALL open a focused form. Manage source SHALL disclose the source URL, local refresh timestamps, latest result, and existing scoped actions.
+
+#### Scenario: Manage a configured month
+- **WHEN** the operator expands a year and opens Manage source for a month
+- **THEN** its metadata and refresh, archive, restore, and separately confirmed deletion actions are available without changing their scope
+
+#### Scenario: Preserve hierarchy preferences
+- **WHEN** the operator returns to a feed or reloads it
+- **THEN** only years explicitly expanded in the existing browser preference are open
+
+### Requirement: Explain feed creation validation
+The dedicated creation screen SHALL use the approved narrow form, preserve existing fields and values on failure, expose linked field errors, and focus an error summary on invalid submission. Pending submissions SHALL be disabled; Cancel SHALL return to the list and success SHALL open the created feed.
+
+#### Scenario: Submit an invalid feed
+- **WHEN** the operator submits missing or invalid values
+- **THEN** the focused summary links to invalid fields and each control exposes its associated error
+
+### Requirement: Distinguish PDF classification from publication decisions
+PDF review SHALL retain labelled dependent selectors, deep links, document-specific sources, extraction state, and independent classification and publication decision feedback. Failed decisions SHALL retain the prior value; inclusion SHALL not bypass successful extraction.
+
+#### Scenario: Override a promotional document
+- **WHEN** the operator selects Include in feed
+- **THEN** its automatic classification remains visible separately from the saved override and extraction eligibility
+
+#### Scenario: Decision save fails
+- **WHEN** a document decision cannot be saved
+- **THEN** that row reports failure and retains the prior saved decision
