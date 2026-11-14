@@ -16,6 +16,7 @@ hmac = "0.12"
 libfuzzer-sys = "0.4"
 percent-encoding = "2"
 pdf_oxide = "0.3.78"
+
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -43,3 +44,6 @@ bench = false
 
 [workspace]
 members = ["."]
+
+[patch.crates-io]
+pdf_oxide = { path = "../vendor/pdf_oxide" }
