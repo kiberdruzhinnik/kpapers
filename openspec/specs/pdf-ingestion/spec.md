@@ -236,36 +236,6 @@ The system SHALL omit the standalone branding line `Кримсон Аналит�
 - **WHEN** an eligible PDF mentions the same branding text as part of a larger article sentence or paragraph
 - **THEN** the article text is preserved in extracted text and published HTML
 
-### Requirement: Select a PDF extraction engine
-The system SHALL support Pdfium and Marker as PDF extraction engines and SHALL use the configured global default unless a feed overrides it. Existing deployments SHALL default to Pdfium.
-
-#### Scenario: Marker is selected
-- **WHEN** Marker is the effective engine for a feed
-- **THEN** Marker extracts every eligible PDF in that feed, including PDFs with native text
-
-#### Scenario: Pdfium is selected
-- **WHEN** Pdfium is the effective engine for a feed
-- **THEN** Pdfium extracts its eligible PDFs
-
-### Requirement: Apply publication processing to every engine
-The system SHALL apply the existing PDF cleanup, promotional classification, and safe HTML requirements to output from either extraction engine.
-
-#### Scenario: Marker encounters recognized publication chrome
-- **WHEN** Marker extracts a PDF containing recognized boundary advertisements or Sponsr publication chrome
-- **THEN** the same applicable cleanup rules remove that content while preserving article content
-
-#### Scenario: Marker output contains unsafe markup
-- **WHEN** Marker output includes markup outside the permitted HTML policy
-- **THEN** published HTML excludes unsafe elements and attributes
-
-#### Scenario: Marker extracts an indented Sponsr notice
-- **WHEN** a Sponsr PDF contains an indented notice region with multiple paragraphs
-- **THEN** published HTML groups the notice in one blockquote, preserves its paragraph boundaries, and keeps subsequent body text outside it
-
-#### Scenario: An indented notice contains mixed emphasis
-- **WHEN** an indented notice contains multiple paragraphs with mixed emphasis
-- **THEN** published HTML preserves the paragraph boundaries and emphasis within one blockquote
-
 ### Requirement: Reprocess content when the effective engine changes
 The system SHALL include the effective extraction engine and processing revision in cache identity and reprocess affected documents on their next refresh, even if their source fingerprint is unchanged.
 
@@ -281,44 +251,43 @@ The system SHALL include the effective extraction engine and processing revision
 - **WHEN** a later refresh reuses a matching successful cache after an extraction failure
 - **THEN** the cached entry remains available in RSS and the document's recovery state reflects the successful reuse
 
-### Requirement: Prevent incomplete OCR-disabled output
-The system SHALL NOT replace successful cached content with an OCR-disabled conversion result when scanned content may have been omitted, whether OCR-disabled mode is initially selected or used in a retry. The system SHALL use OCR unless completeness of the native text layer can be established, and SHALL report extraction failure if conversion cannot complete safely.
+### Requirement: Extract eligible PDFs with pdf_oxide default text extraction
+The system SHALL use the Rust `pdf_oxide` default plain-text extraction path for every eligible PDF, without OCR or image embedding, and SHALL NOT switch to another extraction engine when conversion fails.
 
-#### Scenario: Marker retries a mixed document without OCR
-- **WHEN** Marker conversion fails and a retry without OCR cannot establish that all native-text and scanned pages were extracted
-- **THEN** the system reports a failure instead of publishing or caching the partial result
+#### Scenario: Convert an eligible multi-page PDF
+- **WHEN** an eligible PDF is refreshed
+- **THEN** `pdf_oxide` extracts each page with `PdfDocument::extract_text_lines`, preserving available text, run styling, and page reading order for the existing publication pipeline
 
-#### Scenario: A page combines native text and scanned content
-- **WHEN** a PDF page contains both native text and scanned content and completeness of its native text layer cannot be established
-- **THEN** the system uses OCR and reports a failure rather than publishing incomplete content if extraction cannot complete safely
+#### Scenario: Conversion fails
+- **WHEN** `pdf_oxide` cannot open or extract text from a PDF
+- **THEN** the system records an ingestion error and preserves the last successfully processed content
 
-#### Scenario: A small image contains scanned text
-- **WHEN** a PDF page contains native text and a small image that may contain scanned text
-- **THEN** image size alone does not establish completeness of the native text layer and the system uses OCR unless completeness is established
+#### Scenario: Scanned-only PDF has no extractable text
+- **WHEN** a PDF contains only scanned pages and OCR is not enabled
+- **THEN** the system reports extraction failure rather than publishing empty or incomplete output
 
-#### Scenario: Visible text is drawn as vector paths
-- **WHEN** a PDF page contains native text and visible lettering drawn as vector paths whose text is absent from the native text layer
-- **THEN** the system uses OCR or reports a failure without publishing or caching partial content unless completeness can be established
+### Requirement: Apply publication processing to extracted text
+The system SHALL apply PDF cleanup, promotional classification, publication HTML generation, and safe HTML requirements to text produced by `pdf_oxide`.
 
-#### Scenario: An image is nested within PDF forms
-- **WHEN** a PDF page contains native text and an image nested beyond an object traversal limit
-- **THEN** the system detects the image or treats the native text layer as unverifiable and uses OCR or reports a failure without publishing partial content
+#### Scenario: Conversion encounters recognized publication chrome
+- **WHEN** `pdf_oxide` extracts text from a PDF containing recognized boundary advertisements or Sponsr publication chrome
+- **THEN** the applicable cleanup rules remove that content while preserving article content
 
-#### Scenario: Automatic text-layer selection could skip scanned content
-- **WHEN** Marker encounters a mixed native-text and scanned page whose text layer cannot be established as complete
-- **THEN** the system uses a conversion path that performs OCR on the scanned content or reports a failure without publishing partial content, even if Marker's automatic mode would skip OCR
+#### Scenario: Converted content contains unsafe markup
+- **WHEN** extracted text contains strings that resemble HTML or content that could form markup outside the permitted HTML policy
+- **THEN** published HTML excludes unsafe elements and attributes
 
-#### Scenario: OCR-disabled mode is explicitly configured
-- **WHEN** OCR-disabled worker mode is configured for a PDF whose native text-layer completeness cannot be established
-- **THEN** the system uses OCR or reports a failure without publishing or caching partial content
+### Requirement: Reprocess content when the processing pipeline changes
+The system SHALL include the `pdf_oxide` engine identity and processing revision in cache identity and reprocess affected documents on their next refresh when the processing revision changes, even if their source fingerprint is unchanged.
 
-### Requirement: Recover worker capacity after a conversion timeout
-The system SHALL stop timed-out conversion work or restart the worker so that a timed-out conversion cannot permanently occupy extraction capacity.
+#### Scenario: Processing revision changes
+- **WHEN** a cached document is refreshed after the PDF processing revision changes
+- **THEN** the system converts it with `pdf_oxide` instead of reusing content produced by an earlier pipeline revision
 
-#### Scenario: A conversion exceeds its execution limit
-- **WHEN** a Marker conversion exceeds its execution time limit
-- **THEN** the request fails and the worker recovers capacity to process a subsequent document
+#### Scenario: Conversion fails
+- **WHEN** `pdf_oxide` fails or is unavailable
+- **THEN** the system records the failure and continues publishing the last successfully processed content without silently switching engines
 
-#### Scenario: The client disconnects before a timeout response
-- **WHEN** a Marker conversion exceeds its execution time limit after the client disconnects
-- **THEN** the worker still stops the conversion or restarts and recovers capacity to process a subsequent document
+#### Scenario: Cached content is reused after a failed refresh
+- **WHEN** a later refresh reuses a matching successful cache after a conversion failure
+- **THEN** the cached entry remains available in RSS and the document's recovery state reflects the successful reuse

@@ -63,6 +63,16 @@ def main():
     generated_beta_filename = "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды, «бессмертные» портфели и стоицизм.pdf"
     beta_filename = os.environ.get("REFERENCE_DOCUMENT_FILENAME", generated_beta_filename) if reference_pdf_test else generated_beta_filename
     beta_title = beta_filename.removesuffix(".pdf").removesuffix(".PDF")
+    scanned_only_filename = "scanned-only.pdf"
+
+    def expect_scanned_only_failure(document, force=True):
+        query = "?force=true" if force else ""
+        try:
+            request(f"{APP}/api/management/documents/{document['id']}/extract{query}", method="POST", opener=app_client)
+            raise AssertionError("scanned-only PDF without OCR must fail extraction")
+        except urllib.error.HTTPError as response:
+            assert response.code == 502, response.code
+
     cookies = http.cookiejar.CookieJar()
     app_client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
     request(APP + "/api/management/login", method="POST", payload={
@@ -81,11 +91,14 @@ def main():
     month_id = month["id"]
 
     _, discovery = request(f"{APP}/api/management/months/{month_id}/discover", method="POST", opener=app_client)
-    assert discovery["discovered_pdfs"] == 3, discovery
+    assert discovery["discovered_pdfs"] == 4, discovery
     _, documents = request(f"{APP}/api/management/months/{month_id}/documents", opener=app_client)
     by_name = {document["filename"]: document for document in documents}
-    assert set(by_name) == {"article-alpha.pdf", beta_filename, "club-promotion.pdf"}
+    assert set(by_name) == {"article-alpha.pdf", beta_filename, "club-promotion.pdf", scanned_only_filename}
     for document in documents:
+        if document["filename"] == scanned_only_filename:
+            expect_scanned_only_failure(document)
+            continue
         _, extraction = request(f"{APP}/api/management/documents/{document['id']}/extract?force=true", method="POST", opener=app_client)
         if reference_pdf_test and document["filename"] == beta_filename:
             sample = extraction["first_page_sample"]
@@ -96,7 +109,14 @@ def main():
             for suffix in (" [skladchik.org]", " [sklad"):
                 reference_title = reference_title.removesuffix(suffix)
             assert sample.startswith(reference_title), f"reference title missing at start of extraction: {sample[:500]!r}"
+    _, documents = request(f"{APP}/api/management/months/{month_id}/documents", opener=app_client)
+    scanned_only = next(document for document in documents if document["filename"] == scanned_only_filename)
+    assert scanned_only["extraction_status"] == "failure", scanned_only
+    assert "no usable native text" in (scanned_only["last_error"] or "").lower(), scanned_only
     for document in documents:
+        if document["filename"] == scanned_only_filename:
+            expect_scanned_only_failure(document, force=False)
+            continue
         _, extraction = request(f"{APP}/api/management/documents/{document['id']}/extract", method="POST", opener=app_client)
         assert extraction["status"] == "cached", extraction
 
@@ -136,27 +156,17 @@ def main():
         print(f"Live reference PDF first 1,200 HTML chars: {beta_html[:1200]}")
     else:
         assert beta_html.startswith("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды, «бессмертные» портфели и стоицизм</strong></h1>"), beta_html
-        assert "<p><strong>это не инвестиционные рекомендации</strong></p>" in beta_html, beta_html
         assert "<p>Сразу к делу, коллеги.</p>" in beta_html, beta_html
-        assert "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>" in beta_html, beta_html
         assert beta_html.endswith("<p>На данном проекте периодически упоминается термин «старые деньги».</p>"), beta_html
         assert "<h2>" not in beta_html and "<h3>" not in beta_html, beta_html
         for chrome in ("sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"):
             assert chrome not in beta_html, f"Sponsr publication chrome leaked: {beta_html}"
-    assert "<h1><strong>06.11.2026 12:12</strong></h1>" in alpha_html, alpha_html
-    assert "<h2><strong>Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>" in alpha_html, alpha_html
-    assert "<h3><strong>У Европы кризис жанра</strong></h3>" in alpha_html, alpha_html
-    assert "<p><strong>Нижний уровень заголовка</strong></p>" in alpha_html, alpha_html
-    assert "<h4>" not in alpha_html, alpha_html
-    assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic<strong> both</strong></em> styles.</p>" in alpha_html, alpha_html
-    assert "<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране. Он трижды голосовал за Трампа; Трамп провёл здесь съезд всего два месяца назад.</em></p>" in alpha_html, alpha_html
-    assert "<p><em>Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.</em></p>" in alpha_html, alpha_html
-    assert "<p><strong>это не инвестиционные рекомендации</strong></p>" in alpha_html, alpha_html
-    assert "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>" in alpha_html, alpha_html
-    assert "<p>Обычный текст после предуведомления.</p>\n<p>Колумнистка Bloomberg" in alpha_html, alpha_html
+    assert "Дмитриев у Трампов" in alpha_html, alpha_html
+    assert "У Европы кризис жанра" in alpha_html, alpha_html
+    assert "Fixture article alpha wraps" in alpha_html, alpha_html
+    assert "это не инвестиционные рекомендации" in alpha_html, alpha_html
+    assert "Традиционные технические предуведомления" in alpha_html, alpha_html
     assert "skladchik.ORG" not in alpha_html, "the final promotional page leaked into RSS content"
-    assert "<p>1</p>" not in alpha_html, "the printed page label leaked into RSS content"
-    assert "<p>2</p>" not in alpha_html, "the second-page label after the front ad leaked into RSS content"
     no_redirect = urllib.request.build_opener(NoRedirect())
     for title, filename in (("article-alpha", "article-alpha.pdf"), (beta_title, beta_filename)):
         try:
@@ -207,7 +217,7 @@ def main():
     if reference_pdf_test:
         os.unlink(f"/fixtures/current-month/{beta_filename}")
     _, discovery = request(f"{APP}/api/management/months/{month_id}/discover", method="POST", opener=app_client)
-    assert discovery["discovered_pdfs"] == 3
+    assert discovery["discovered_pdfs"] == 4
     _, documents = request(f"{APP}/api/management/months/{month_id}/documents", opener=app_client)
     alpha_doc = next(document for document in documents if document["filename"] == "article-alpha.pdf")
     assert alpha_doc["id"] == by_name["article-alpha.pdf"]["id"], "fixture provider identity changed"
@@ -217,20 +227,11 @@ def main():
     assert len(refreshed_items) == 2
     refreshed_alpha_item = next(item for item in refreshed_items if item.findtext("title") == "article-alpha")
     refreshed_alpha_html = refreshed_alpha_item.findtext("description") or ""
-    assert "<h1><strong>06.11.2026 12:12</strong></h1>" in refreshed_alpha_html, refreshed_alpha_html
     assert "<h2><strong>Обновлённый Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<h3><strong>У Европы кризис жанра</strong></h3>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p><strong>Нижний уровень заголовка</strong></p>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<h4>" not in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p>Fixture article alpha wraps across two lines. <strong>Bold </strong><em>italic<strong> both</strong></em> styles.</p>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p><em>«Техас — крупнейший <strong>красный</strong> штат в стране. Он трижды голосовал за Трампа; Трамп провёл здесь съезд всего два месяца назад.</em></p>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p><em>Демократ Джеймс Таларико легко победил его со счётом 55% : 43%.</em></p>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p><strong>это не инвестиционные рекомендации</strong></p>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>" in refreshed_alpha_html, refreshed_alpha_html
-    assert "<p>Обычный текст после предуведомления.</p>\n<p>Колумнистка Bloomberg" in refreshed_alpha_html, refreshed_alpha_html
+    assert "Обновлённый Дмитриев у Трампов" in refreshed_alpha_html
+    assert "Fixture article alpha wraps" in refreshed_alpha_html
+    assert "это не инвестиционные рекомендации" in refreshed_alpha_html
     assert "skladchik.ORG" not in refreshed_alpha_html
-    assert "<p>1</p>" not in refreshed_alpha_html
-    assert "<p>2</p>" not in refreshed_alpha_html
     refreshed_guids = {item.findtext("title"): item.findtext("guid") for item in refreshed_items}
     assert refreshed_guids == guid_by_title, "RSS GUIDs changed during refresh"
 

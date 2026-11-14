@@ -3,12 +3,8 @@
 
 #[path = "../../src/auth.rs"]
 mod auth;
-#[path = "../../src/extraction.rs"]
-mod extraction;
 #[path = "../../src/feed_api.rs"]
 mod feed_api;
-#[path = "../../src/marker_worker.rs"]
-mod marker_worker;
 #[path = "../../src/pdf_processing.rs"]
 mod pdf_processing;
 #[path = "../../src/providers/mod.rs"]

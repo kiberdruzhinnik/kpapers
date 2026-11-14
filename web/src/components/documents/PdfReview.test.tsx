@@ -9,8 +9,8 @@ const document = {
   promotional_classification: "publish", promotional_override: null, extraction_status: "success", last_error: null,
 }
 const feeds = [
-  { id: "feed-1", display_name: "Ada Lovelace", description: "", active: true, refresh_interval_seconds: null, extraction_engine: null },
-  { id: "feed-2", display_name: "Grace Hopper", description: "", active: true, refresh_interval_seconds: null, extraction_engine: null },
+  { id: "feed-1", display_name: "Ada Lovelace", description: "", active: true, refresh_interval_seconds: null },
+  { id: "feed-2", display_name: "Grace Hopper", description: "", active: true, refresh_interval_seconds: null },
 ]
 const selectedMonth = { id: "month-1", feed_id: "feed-1", year: 2026, month: 11, provider: "fixture", source_url: "fixture://current-month/", active: true, last_attempt_at: null, next_refresh_at: null, last_result: null, last_error: null }
 const secondDocument = { ...document, id: "doc-2", filename: "compiler-notes.pdf" }

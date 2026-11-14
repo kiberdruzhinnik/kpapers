@@ -66,7 +66,6 @@ services:
       FIXTURE_ROOT: /fixtures
       REFERENCE_PDF_TEST: ${E2E_REFERENCE_PDF_TEST:-false}
       REFERENCE_DOCUMENT_FILENAME: ${REFERENCE_DOCUMENT_FILENAME:-article-beta.pdf}
-      EXTRACTION_ENGINE: ${E2E_EXTRACTION_ENGINE:-pdfium}
     volumes:
       - ./tests/e2e:/tests/e2e:ro
       - ${E2E_FIXTURE_HOST_DIR:?Set E2E_FIXTURE_HOST_DIR}:/fixtures

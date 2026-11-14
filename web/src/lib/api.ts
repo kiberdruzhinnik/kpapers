@@ -1,12 +1,9 @@
-export type ExtractionEngine = "pdfium" | "marker"
-
 export type Feed = {
   id: string
   display_name: string
   description: string
   active: boolean
   refresh_interval_seconds: number | null
-  extraction_engine: ExtractionEngine | null
 }
 
 export type Year = {
@@ -122,9 +119,9 @@ export const api = {
   reviewQueue: (archived: boolean) => request<ReviewQueueDocument[]>(
     `/api/management/review-queue?archived=${archived}`,
   ),
-  createFeed: (payload: Pick<Feed, "display_name" | "description" | "extraction_engine"> & { refresh_interval_seconds: number | null }) =>
+  createFeed: (payload: Pick<Feed, "display_name" | "description"> & { refresh_interval_seconds: number | null }) =>
     request<Feed>("/api/management/feeds", json("POST", payload)),
-  updateFeed: (id: string, payload: Pick<Feed, "display_name" | "description" | "extraction_engine"> & { refresh_interval_seconds: number | null }) =>
+  updateFeed: (id: string, payload: Pick<Feed, "display_name" | "description"> & { refresh_interval_seconds: number | null }) =>
     request<void>(`/api/management/feeds/${encodeURIComponent(id)}`, json("PUT", payload)),
   archiveFeed: (id: string) => request<void>(`/api/management/feeds/${encodeURIComponent(id)}/archive`, json("POST")),
   restoreFeed: (id: string) => request<void>(`/api/management/feeds/${encodeURIComponent(id)}/restore`, json("POST")),

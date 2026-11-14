@@ -110,7 +110,7 @@ def main() -> None:
         [("across two lines.", 12, "F1")],
         [("Bold ", 12, "F2"), ("italic", 12, "F3"), (" both", 12, "F4"), (" styles.", 12, "F1")],
         [],
-        [("**это не инвестиционные рекомендации**", 12, "F1")],
+        [("это не инвестиционные рекомендации", 12, "F1")],
         [],
         [("Традиционные технические предуведомления:", 12, "F1", 70)],
         [],
@@ -136,7 +136,7 @@ def main() -> None:
         [("27 февр 11:44", 10, "F1")],
         [("58 минут", 10, "F1")],
         [],
-        [("**это не инвестиционные рекомендации**", 16, "F1")],
+        [("это не инвестиционные рекомендации", 16, "F1")],
         [],
         [("Сразу к делу, коллеги.", 16, "F1")],
         [],
@@ -150,6 +150,9 @@ def main() -> None:
     ]
     (ROOT / "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды, «бессмертные» портфели и стоицизм.pdf").write_bytes(pdf_pages([sponsr_page]))
     (ROOT / "club-promotion.pdf").write_bytes(pdf("Join the club today"))
+    # A page with no text layer simulates a scanned-only PDF. Extraction must
+    # report a failure instead of publishing empty content when OCR is disabled.
+    (ROOT / "scanned-only.pdf").write_bytes(pdf_pages([""]))
     (ROOT / "ignored.txt").write_text("not a PDF", encoding="utf-8")
     (ROOT / "nested").mkdir(exist_ok=True)
     (ROOT / "nested" / "nested.pdf").write_bytes(pdf("Must not be listed"))

@@ -34,12 +34,12 @@ describe("management API request", () => {
     }))
     vi.stubGlobal("fetch", fetchMock)
 
-    await api.createFeed({ display_name: "Ada", description: "Notes", refresh_interval_seconds: null, extraction_engine: null })
+    await api.createFeed({ display_name: "Ada", description: "Notes", refresh_interval_seconds: null })
 
     expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds", expect.objectContaining({
       method: "POST",
       credentials: "same-origin",
-      body: JSON.stringify({ display_name: "Ada", description: "Notes", refresh_interval_seconds: null, extraction_engine: null }),
+      body: JSON.stringify({ display_name: "Ada", description: "Notes", refresh_interval_seconds: null }),
     }))
     expect(fetchMock.mock.calls[0][1]?.headers).toBeInstanceOf(Headers)
     expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Content-Type")).toBe("application/json")

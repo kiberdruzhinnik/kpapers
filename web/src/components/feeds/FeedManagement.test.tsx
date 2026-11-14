@@ -9,11 +9,10 @@ type TestFeed = {
   description: string
   active: boolean
   refresh_interval_seconds: number | null
-  extraction_engine: "pdfium" | "marker" | null
 }
 
 const feed: TestFeed = {
-  id: "feed-1", display_name: "Ada Lovelace", description: "Research notes", active: true, refresh_interval_seconds: null, extraction_engine: null,
+  id: "feed-1", display_name: "Ada Lovelace", description: "Research notes", active: true, refresh_interval_seconds: null,
 }
 
 function json(body: unknown, status = 200) {
@@ -93,11 +92,10 @@ function installFeedApi(initial: TestFeed[] = []) {
       else if (action === "permanent" && method === "DELETE") feeds = feeds.filter((item) => item.id !== id)
       else if (action === "refresh" && method === "POST") return json({ job_id: "job-1", status: "queued" }, 202)
       else if (!action && method === "PUT") {
-        const payload = JSON.parse(String(init?.body)) as Pick<TestFeed, "display_name" | "description" | "refresh_interval_seconds" | "extraction_engine">
+        const payload = JSON.parse(String(init?.body)) as Pick<TestFeed, "display_name" | "description" | "refresh_interval_seconds">
         target.display_name = payload.display_name
         target.description = payload.description
         target.refresh_interval_seconds = payload.refresh_interval_seconds
-        target.extraction_engine = payload.extraction_engine
         return json(target)
       } else return json(null, 404)
       return json(null, 204)
@@ -205,38 +203,26 @@ describe("feed management workflows", () => {
     await screen.findByRole("heading", { name: "Grace Hopper" })
     const createCall = fetchMock.mock.calls.find(([path, init]) => String(path) === "/api/management/feeds" && init?.method === "POST")
     expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
-      display_name: "Grace Hopper", description: "Compiler notes", refresh_interval_seconds: 5400, extraction_engine: null,
+      display_name: "Grace Hopper", description: "Compiler notes", refresh_interval_seconds: 5400,
     })
     expect(screen.getByText("Stable RSS address")).toBeInTheDocument()
     expect(screen.getByText(/\/feeds\/feed-new$/)).toBeInTheDocument()
   })
 
-  it("persists the extraction engine selection when creating and editing a feed", async () => {
-    const fetchMock = installFeedApi([{ ...feed, extraction_engine: "marker" }])
+  it("does not expose or submit an extraction engine setting", async () => {
+    const fetchMock = installFeedApi([feed])
     const user = userEvent.setup()
     render(<App />)
     await openFeeds(user)
 
-    expect(screen.getByText("Extraction engine Marker")).toBeInTheDocument()
+    expect(screen.queryByLabelText("PDF extraction engine")).not.toBeInTheDocument()
+    expect(screen.queryByText(/Extraction engine/)).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Edit details" }))
-    const details = screen.getByRole("dialog", { name: "Edit feed details" })
-    expect(within(details).getByLabelText("PDF extraction engine")).toHaveValue("marker")
-    await user.selectOptions(within(details).getByLabelText("PDF extraction engine"), "inherit")
-    await user.click(within(details).getByRole("button", { name: "Save changes" }))
-    await screen.findByText("Extraction engine Inherit global default")
-    expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds/feed-1", expect.objectContaining({
-      method: "PUT",
-      body: expect.stringContaining('"extraction_engine":null'),
-    }))
-
-    await user.click(screen.getByRole("button", { name: "All feeds" }))
-    await user.click(screen.getByRole("button", { name: "Create feed" }))
-    await user.type(screen.getByLabelText("Author name"), "Marker author")
-    await user.selectOptions(screen.getByLabelText("PDF extraction engine"), "marker")
-    await user.click(screen.getByRole("button", { name: "Create feed" }))
-    await screen.findByRole("heading", { name: "Marker author" })
-    const createCall = fetchMock.mock.calls.find(([path, init]) => String(path) === "/api/management/feeds" && init?.method === "POST")
-    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(expect.objectContaining({ extraction_engine: "marker" }))
+    await user.clear(screen.getByLabelText("Author name"))
+    await user.type(screen.getByLabelText("Author name"), "Ada Byron")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+    const updateCall = fetchMock.mock.calls.find(([path, init]) => String(path) === "/api/management/feeds/feed-1" && init?.method === "PUT")
+    expect(JSON.parse(String(updateCall?.[1]?.body))).not.toHaveProperty("extraction_engine")
   })
 
   it("shows validation feedback when feed creation fails", async () => {

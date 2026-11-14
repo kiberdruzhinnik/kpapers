@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type FormEvent } from "react"
 import { Archive, ArrowLeft, Check, ChevronRight, Copy, FileText, MoreHorizontal, Plus, RefreshCw, Rss, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
-import { api, type ExtractionEngine, type Feed, type Month } from "@/lib/api"
+import { api, type Feed, type Month } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { HierarchyManagement } from "@/components/feeds/HierarchyManagement"
 
-type FeedFormValues = { display_name: string; description: string; refresh_hours: string; extraction_engine: "inherit" | ExtractionEngine }
+type FeedFormValues = { display_name: string; description: string; refresh_hours: string }
 type ConfirmAction = { kind: "archive" | "delete"; feed: Feed }
 
 function secondsFromHours(raw: string): number | null {
@@ -40,14 +40,13 @@ function hoursFromSeconds(seconds: number | null): string {
 function FeedForm({ initial, submitLabel, onSubmit, onCancel }: {
   initial?: Feed
   submitLabel: string
-  onSubmit: (values: { display_name: string; description: string; refresh_interval_seconds: number | null; extraction_engine: ExtractionEngine | null }) => Promise<void>
+  onSubmit: (values: { display_name: string; description: string; refresh_interval_seconds: number | null }) => Promise<void>
   onCancel?: () => void
 }) {
   const [values, setValues] = useState<FeedFormValues>(() => ({
     display_name: initial?.display_name ?? "",
     description: initial?.description ?? "",
     refresh_hours: hoursFromSeconds(initial?.refresh_interval_seconds ?? null),
-    extraction_engine: initial?.extraction_engine ?? "inherit",
   }))
   const [pending, setPending] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FeedFormValues, string>>>({})
@@ -83,7 +82,6 @@ function FeedForm({ initial, submitLabel, onSubmit, onCancel }: {
         display_name: name,
         description: values.description.trim(),
         refresh_interval_seconds: secondsFromHours(values.refresh_hours),
-        extraction_engine: values.extraction_engine === "inherit" ? null : values.extraction_engine,
       })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save feed. Please try again.")
@@ -101,7 +99,6 @@ function FeedForm({ initial, submitLabel, onSubmit, onCancel }: {
         <Field data-invalid={Boolean(fieldErrors.display_name)}><FieldLabel htmlFor={`${id}-display_name`}>Author name</FieldLabel><Input aria-describedby={fieldErrors.display_name ? `${id}-name-error` : undefined} aria-invalid={Boolean(fieldErrors.display_name)} autoComplete="off" id={`${id}-display_name`} name="display_name" onChange={(event) => update("display_name", event.target.value)} placeholder="e.g. Ada Lovelace" required value={values.display_name} />{fieldErrors.display_name && <FieldError id={`${id}-name-error`}>{fieldErrors.display_name}</FieldError>}</Field>
         <Field><FieldLabel htmlFor={`${id}-description`}>Description <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Textarea id={`${id}-description`} name="description" onChange={(event) => update("description", event.target.value)} placeholder="A short introduction for readers" rows={4} value={values.description} /></Field>
         <Field data-invalid={Boolean(fieldErrors.refresh_hours)}><FieldLabel htmlFor={`${id}-refresh_hours`}>Refresh interval <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Input aria-describedby={`${id}-refresh-help${fieldErrors.refresh_hours ? ` ${id}-refresh-error` : ""}`} aria-invalid={Boolean(fieldErrors.refresh_hours)} id={`${id}-refresh_hours`} max="87600" name="refresh_hours" onChange={(event) => update("refresh_hours", event.target.value)} placeholder="Use defaults" step="0.1" type="number" value={values.refresh_hours} /><FieldDescription id={`${id}-refresh-help`}>In hours. Leave blank to use the current and older month defaults.</FieldDescription>{fieldErrors.refresh_hours && <FieldError id={`${id}-refresh-error`}>{fieldErrors.refresh_hours}</FieldError>}</Field>
-        <Field><FieldLabel htmlFor={`${id}-extraction_engine`}>PDF extraction engine</FieldLabel><select aria-describedby={`${id}-engine-help`} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" id={`${id}-extraction_engine`} name="extraction_engine" onChange={(event) => update("extraction_engine", event.target.value)} value={values.extraction_engine}><option value="inherit">Inherit global default</option><option value="pdfium">Pdfium</option><option value="marker">Marker</option></select><FieldDescription id={`${id}-engine-help`}>Marker requires the optional private worker. Inherit follows the deployment-wide default.</FieldDescription></Field>
       </FieldGroup>
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
         {onCancel && <Button onClick={onCancel} type="button" variant="outline">Cancel</Button>}
@@ -122,7 +119,7 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
   const [copied, setCopied] = useState(false)
   const rssUrl = `${window.location.origin}/feeds/${feed.id}`
 
-  async function save(values: { display_name: string; description: string; refresh_interval_seconds: number | null; extraction_engine: ExtractionEngine | null }) {
+  async function save(values: { display_name: string; description: string; refresh_interval_seconds: number | null }) {
     try {
       await api.updateFeed(feed.id, values)
       await onSaved()
@@ -197,7 +194,6 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
       <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
         <span>Feed ID <code className="ml-1 break-all text-[11px] text-foreground/70">{feed.id}</code></span>
         <span>Refresh interval {feed.refresh_interval_seconds ? `${(feed.refresh_interval_seconds / 3600).toLocaleString()} hours` : "Default schedule"}</span>
-        <span>Extraction engine {feed.extraction_engine === "marker" ? "Marker" : feed.extraction_engine === "pdfium" ? "Pdfium" : "Inherit global default"}</span>
       </div>
     </div>
   )
@@ -320,7 +316,7 @@ export function FeedManagement({ feeds, onFeedsChange, onReviewMonth, selectedFe
 
 
 export function CreateFeed({ onCreated, onCancel }: { onCreated: (feed: Feed) => void; onCancel: () => void }) {
-  async function create(values: { display_name: string; description: string; refresh_interval_seconds: number | null; extraction_engine: ExtractionEngine | null }) {
+  async function create(values: { display_name: string; description: string; refresh_interval_seconds: number | null }) {
     const feed = await api.createFeed(values)
     onCreated(feed)
     toast.success("Feed created", { description: `${feed.display_name} is ready for source folders.` })

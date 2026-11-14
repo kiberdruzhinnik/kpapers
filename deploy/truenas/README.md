@@ -1,6 +1,6 @@
 # TrueNAS SCALE deployment
 
-This stack pulls the API, web, and Marker worker images from GitHub Container Registry. Keep `compose.yaml` and `.env` together in the TrueNAS app directory. The API database is stored in `./kpapers_data`; the Marker model cache is stored in a named volume. The API image runs as UID:GID `568:568` (`app`).
+This stack pulls the API and web images from GitHub Container Registry. Keep `compose.yaml` and `.env` together in the TrueNAS app directory. The API database is stored in `./kpapers_data`. The API image runs as UID:GID `568:568` (`app`).
 
 ## Prepare the deployment
 
@@ -19,7 +19,7 @@ This stack pulls the API, web, and Marker worker images from GitHub Container Re
    docker network create npm
    ```
 
-   The web service joins both this `npm` network and the stack's default network. Nginx Proxy Manager can reach it by the Compose service name `kpapers-web` on port 80. The API and Marker worker remain on the private default network.
+   The web service joins both this `npm` network and the stack's default network. Nginx Proxy Manager can reach it by the Compose service name `kpapers-web` on port 80. The API remains on the stack's private default network.
 
 3. Generate a session signing key and an Argon2 password hash. The API image's password command reads one password line from standard input and prints the hash:
 
@@ -33,9 +33,9 @@ This stack pulls the API, web, and Marker worker images from GitHub Container Re
 
 4. Set `PUBLIC_BASE_URL` to the URL operators use to reach the service. Keep `COOKIE_SECURE=true` when HTTPS is configured at the reverse proxy. The web service uses `http://kpapers-api:8080` internally; this must match the API service name in `compose.yaml`.
 
-## Extraction engine
+## PDF text extraction
 
-The stack includes the Marker worker and defaults `PDF_EXTRACTION_ENGINE` to `marker`, so Marker is the global default while feed-level engine choices can still select either Marker or Pdfium. Set `PDF_EXTRACTION_ENGINE=pdfium` in `.env` to make Pdfium the global default. The worker downloads its pinned models on first startup and caches them in the `marker_models` volume; its health check can remain starting for up to 15 minutes while it initializes. Allow enough memory and CPU for the Marker model runtime. Worker logs are available with `docker compose logs -f kpapers-marker`.
+The API extracts available text from each PDF page with the Rust `pdf_oxide` library. Extraction runs inside the API container and needs no separate worker or native PDF runtime. OCR is disabled; scanned-only PDFs without a text layer are reported as extraction failures, and the last successful cached content remains available.
 
 ## Start and update
 
@@ -46,7 +46,7 @@ docker compose --env-file .env -f compose.yaml config
 docker compose --env-file .env -f compose.yaml up -d
 ```
 
-The API, web, and Marker images are published to GHCR. The web service waits for the API health check; the Marker worker initializes independently. On the first workflow publish, a repository maintainer must set all three GHCR packages to public in their GitHub package settings.
+The API and web images are published to GHCR. The web service waits for the API health check. On the first workflow publish, a repository maintainer must set both GHCR packages to public in their GitHub package settings.
 
 For routine updates using `latest`:
 
@@ -59,11 +59,11 @@ For a pinned release, set `IMAGE_TAG` in `.env` to its version tag, such as `v1.
 
 ## View service logs
 
-The API writes structured JSON events, one per line, to stdout. Follow API or worker logs from the deployment directory:
+The API writes structured JSON events, one per line, to stdout. Follow service logs from the deployment directory:
 
 ```sh
 docker compose --env-file .env -f compose.yaml logs -f kpapers-api
-docker compose --env-file .env -f compose.yaml logs -f kpapers-marker
+docker compose --env-file .env -f compose.yaml logs -f kpapers-web
 ```
 
 Omit `-f` to print collected logs and exit, or add `--tail 200` to limit the initial output.

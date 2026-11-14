@@ -25,9 +25,6 @@ jobs:
           - image: kpapers-web
             context: ./web
             file: ./web/Dockerfile
-          - image: kpapers-marker
-            context: ./marker_worker
-            file: ./marker_worker/Dockerfile
     steps:
       - name: Check out source
         uses: actions/checkout@v4
