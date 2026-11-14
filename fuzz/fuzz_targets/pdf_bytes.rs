@@ -1,10 +1,6 @@
 #![no_main]
 #![allow(dead_code)]
 
-#[path = "../../src/extraction.rs"]
-mod extraction;
-#[path = "../../src/marker_worker.rs"]
-mod marker_worker;
 #[path = "../../src/pdf_processing.rs"]
 mod pdf_processing;
 

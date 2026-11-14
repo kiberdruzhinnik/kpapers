@@ -1,8 +1,7 @@
-use crate::extraction::{ExtractionEngine, MarkerSettings};
-use crate::marker_worker::{MarkerClient, MarkerResponse};
-use pdfium_render::prelude::{PdfFontWeight, Pdfium};
-use std::sync::OnceLock;
+use pdf_oxide::PdfDocument;
+use pdf_oxide::layout::TextLine;
 
+#[derive(Debug)]
 pub struct ExtractedText {
     pub full_text: String,
     pub html: String,
@@ -10,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 13;
+const EXTRACTION_PIPELINE_REVISION: u32 = 15;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -33,18 +32,8 @@ impl StyledLine {
     }
 }
 
-#[cfg(test)]
 pub fn cache_fingerprint(source_fingerprint: &str) -> String {
-    cache_fingerprint_for(ExtractionEngine::Pdfium, source_fingerprint)
-}
-
-/// Cache identity includes both the effective engine and the processing
-/// revision. Changing either value makes the next refresh reprocess the PDF.
-pub fn cache_fingerprint_for(engine: ExtractionEngine, source_fingerprint: &str) -> String {
-    format!(
-        "pdf-text-v{EXTRACTION_PIPELINE_REVISION}:{}:{source_fingerprint}",
-        engine.as_str()
-    )
+    format!("pdf-text-v{EXTRACTION_PIPELINE_REVISION}:pdf_oxide:{source_fingerprint}")
 }
 
 pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, String> {
@@ -55,100 +44,71 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
         return Err("source is not a PDF file".into());
     }
 
-    let pdfium = pdfium()?;
-    let document = pdfium
-        .load_pdf_from_byte_slice(bytes, None)
+    let document = PdfDocument::from_bytes(bytes.to_vec())
         .map_err(|error| format!("PDF document load failed: {error}"))?;
-    let page_count = document.pages().len() as usize;
+    let page_count = document
+        .page_count()
+        .map_err(|error| format!("PDF page count failed: {error}"))?;
     if page_count == 0 {
         return Err("PDF contains no pages".into());
     }
 
     let mut pages = Vec::with_capacity(page_count);
     for page_index in 0..page_count {
-        let page = document
-            .pages()
-            .get(page_index as _)
-            .map_err(|error| format!("PDF page load failed: {error}"))?;
-        let text = page
-            .text()
-            .map_err(|error| format!("PDF text extraction failed: {error}"))?;
-        let chars = text.chars();
-        let mut lines: Vec<StyledLine> = Vec::new();
-        let mut previous_y: Option<f32> = None;
-        let mut previous_size = 0.0f32;
-        let mut force_new_line = false;
-
-        for character in chars.iter() {
-            let Some(ch) = character.unicode_char() else {
-                continue;
-            };
-            if !is_xml_10_char(ch) {
-                continue;
-            }
-            if ch == '\r' {
-                continue;
-            }
-            let y = character
-                .origin_y()
-                .map_err(|error| format!("PDF character position extraction failed: {error}"))?
-                .value;
-            let x = character
-                .origin_x()
-                .map_err(|error| format!("PDF character position extraction failed: {error}"))?
-                .value;
-            let size = character.scaled_font_size().value.max(1.0);
-            if ch == '\n' {
-                force_new_line = true;
-                continue;
-            }
-
-            let line_break = force_new_line
-                || previous_y
-                    .is_some_and(|last_y| (last_y - y).abs() > size.max(previous_size) * 0.5);
-            if line_break || lines.is_empty() {
-                let gap_before = previous_y.map(|last_y| (last_y - y).abs()).unwrap_or(0.0);
-                lines.push(StyledLine {
-                    runs: Vec::new(),
-                    size,
-                    gap_before,
-                    left: x,
-                });
-            }
-            force_new_line = false;
-
-            let weight = character.font_weight();
-            let font_name = character.font_name().to_lowercase();
-            let bold = matches!(
-                weight,
-                Some(
-                    PdfFontWeight::Weight600
-                        | PdfFontWeight::Weight700Bold
-                        | PdfFontWeight::Weight800
-                        | PdfFontWeight::Weight900
-                )
-            ) || font_name.contains("bold")
-                || font_name.contains("black")
-                || font_name.contains("demi");
-            let italic = character.font_is_italic()
-                || font_name.contains("italic")
-                || font_name.contains("oblique");
-            let line = lines.last_mut().expect("a line was created");
-            line.size = line.size.max(size);
-            push_styled_char(&mut line.runs, ch, bold, italic);
-            previous_y = Some(y);
-            previous_size = size;
-        }
-
-        for line in &mut lines {
-            parse_markdown_bold(&mut line.runs);
-            trim_run_edges(&mut line.runs);
-        }
-        lines.retain(|line| !line.text().trim().is_empty());
-        pages.push(lines);
+        let lines = document.extract_text_lines(page_index).map_err(|error| {
+            format!(
+                "PDF text extraction failed on page {}: {error}",
+                page_index + 1
+            )
+        })?;
+        pages.push(text_lines_to_styled_lines(lines));
     }
 
     finalize_pages(pages, page_count)
+}
+
+fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
+    let mut styled = Vec::with_capacity(lines.len());
+    let mut previous_top = None;
+    for line in lines {
+        let mut runs = Vec::new();
+        for word in &line.words {
+            let text = word.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let mut run_text = String::new();
+            if !runs.is_empty() {
+                run_text.push(' ');
+            }
+            run_text.push_str(text);
+            runs.push(StyledRun {
+                text: run_text,
+                bold: word.is_bold,
+                italic: word.is_italic,
+            });
+        }
+        if runs.is_empty() {
+            continue;
+        }
+        let size = line
+            .words
+            .iter()
+            .map(|word| word.avg_font_size)
+            .fold(0.0_f32, f32::max)
+            .max(1.0);
+        let gap_before = previous_top
+            .map(|top: f32| (top - line.bbox.y).max(0.0))
+            .unwrap_or(0.0);
+        previous_top = Some(line.bbox.y);
+        styled.push(StyledLine {
+            runs,
+            size,
+            gap_before,
+            left: line.bbox.x,
+        });
+    }
+    styled
 }
 
 fn finalize_pages(
@@ -199,83 +159,6 @@ fn finalize_pages(
         first_page,
         page_count,
     })
-}
-
-/// Convert the Marker worker contract into the shared publication pipeline.
-///
-/// Marker supplies plain text and emphasis runs only. Boundary advertisements,
-/// printed page labels, Sponsr chrome, paragraph joining, heading detection and
-/// HTML escaping are therefore applied by the same code used for Pdfium.
-pub fn extract_marker_response(response: &MarkerResponse) -> Result<ExtractedText, String> {
-    if response.page_count == 0 {
-        return Err("Marker worker returned no pages".into());
-    }
-    if response.pages.len() != response.page_count {
-        return Err("Marker worker page count does not match its page list".into());
-    }
-    let mut pages = Vec::with_capacity(response.pages.len());
-    for page in &response.pages {
-        let mut lines = Vec::with_capacity(page.lines.len());
-        for marker_line in &page.lines {
-            let mut runs = Vec::new();
-            for run in &marker_line.runs {
-                let text = clean_marker_text(&run.text);
-                if !text.is_empty() {
-                    runs.push(StyledRun {
-                        text,
-                        bold: run.bold,
-                        italic: run.italic,
-                    });
-                }
-            }
-            parse_markdown_bold(&mut runs);
-            trim_run_edges(&mut runs);
-            if runs.is_empty() {
-                continue;
-            }
-            lines.push(StyledLine {
-                runs,
-                size: marker_line.size.clamp(1.0, 200.0),
-                gap_before: marker_line.gap_before.max(0.0),
-                left: marker_line.left.max(0.0),
-            });
-        }
-        pages.push(lines);
-    }
-    finalize_pages(pages, response.page_count)
-}
-
-fn clean_marker_text(text: &str) -> String {
-    text.replace(['\0', '\u{fffd}'], "")
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .chars()
-        .filter(|ch| is_xml_10_char(*ch))
-        .collect()
-}
-
-/// Validate and extract with the selected engine. Marker failures are
-/// returned directly; they never invoke Pdfium as an implicit fallback.
-pub async fn extract_with_engine(
-    engine: ExtractionEngine,
-    bytes: &[u8],
-    maximum_bytes: usize,
-    marker: &MarkerSettings,
-) -> Result<ExtractedText, String> {
-    if bytes.len() > maximum_bytes {
-        return Err("PDF exceeds configured size limit".into());
-    }
-    if !bytes.starts_with(b"%PDF-") {
-        return Err("source is not a PDF file".into());
-    }
-    match engine {
-        ExtractionEngine::Pdfium => extract_pdf(bytes, maximum_bytes),
-        ExtractionEngine::Marker => {
-            let client = MarkerClient::from_settings(marker)?;
-            let response = client.extract(bytes, maximum_bytes).await?;
-            extract_marker_response(&response)
-        }
-    }
 }
 
 pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut ExtractedText) {
@@ -434,21 +317,6 @@ fn remove_publication_timestamp(text: &str) -> String {
     text.to_owned()
 }
 
-fn pdfium() -> Result<&'static Pdfium, String> {
-    static INSTANCE: OnceLock<Result<Pdfium, String>> = OnceLock::new();
-    match INSTANCE.get_or_init(|| {
-        let path = std::env::var_os("PDFIUM_LIBRARY_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| Pdfium::pdfium_platform_library_name_at_path("/usr/local/lib"));
-        let bindings = Pdfium::bind_to_library(path)
-            .map_err(|error| format!("Unable to load Pdfium runtime: {error}"))?;
-        Ok(Pdfium::new(bindings))
-    }) {
-        Ok(pdfium) => Ok(pdfium),
-        Err(error) => Err(error.clone()),
-    }
-}
-
 fn push_styled_char(runs: &mut Vec<StyledRun>, ch: char, bold: bool, italic: bool) {
     if let Some(run) = runs
         .last_mut()
@@ -462,34 +330,6 @@ fn push_styled_char(runs: &mut Vec<StyledRun>, ch: char, bold: bool, italic: boo
             italic,
         });
     }
-}
-
-fn parse_markdown_bold(runs: &mut Vec<StyledRun>) {
-    let characters = runs
-        .iter()
-        .flat_map(|run| run.text.chars().map(move |ch| (ch, run.bold, run.italic)))
-        .collect::<Vec<_>>();
-    let mut parsed = Vec::new();
-    let mut index = 0;
-    while index < characters.len() {
-        let is_marker = |at: usize| {
-            characters.get(at).is_some_and(|(ch, _, _)| *ch == '*')
-                && characters.get(at + 1).is_some_and(|(ch, _, _)| *ch == '*')
-        };
-        if is_marker(index)
-            && let Some(end) = (index + 2..characters.len()).find(|at| is_marker(*at))
-        {
-            for (ch, _, italic) in &characters[index + 2..end] {
-                push_styled_char(&mut parsed, *ch, true, *italic);
-            }
-            index = end + 2;
-            continue;
-        }
-        let (ch, bold, italic) = characters[index];
-        push_styled_char(&mut parsed, ch, bold, italic);
-        index += 1;
-    }
-    *runs = parsed;
 }
 
 fn strip_page_label_lines(lines: &mut Vec<StyledLine>, page_number: usize) {
@@ -535,6 +375,7 @@ fn is_skladchik_boundary_ad(lines: &[StyledLine]) -> bool {
     is_skladchik_promotion(&text) || is_skladchik_purchase_promotion(&text)
 }
 
+#[cfg(test)]
 fn is_xml_10_char(ch: char) -> bool {
     matches!(ch, '\u{9}' | '\u{a}' | '\u{d}')
         || ('\u{20}'..='\u{d7ff}').contains(&ch)
@@ -655,16 +496,6 @@ fn append_runs(target: &mut Vec<StyledRun>, runs: &[StyledRun]) {
             target.push(run.clone());
         }
     }
-}
-
-fn trim_run_edges(runs: &mut Vec<StyledRun>) {
-    if let Some(first) = runs.first_mut() {
-        first.text = first.text.trim_start().to_owned();
-    }
-    if let Some(last) = runs.last_mut() {
-        last.text = last.text.trim_end().to_owned();
-    }
-    runs.retain(|run| !run.text.is_empty());
 }
 
 fn first_content_style(line: &StyledLine) -> Option<(bool, bool)> {
@@ -1043,9 +874,7 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
         let page_last = lines.last().copied();
         let mut previous_line: Option<&StyledLine> = None;
         for line in lines {
-            let normalized = line.text().trim().to_lowercase().replace('ё', "е");
-            let is_notice_heading = normalized == "традиционные технические предуведомления:";
-            if is_notice_heading && line.left >= base_left + 5.0 {
+            if line.left >= base_left + 5.0 {
                 quote_left = Some(line.left);
             } else if quote_left.is_some_and(|left| line.left < left - 2.0) {
                 quote_left = None;
@@ -1147,14 +976,12 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        StyledLine, StyledRun, cache_fingerprint, cache_fingerprint_for, extract_marker_response,
-        extract_pdf, is_skladchik_promotion, is_skladchik_purchase_promotion, is_xml_10_char,
-        large_gap_continues_sentence, lines_to_html, normalize_text, pages_to_text,
-        push_styled_char, strip_page_label_lines, strip_page_labels_by_content_position,
-        strip_sponsr_branding, strip_sponsr_preamble, text_to_safe_html,
+        StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
+        is_skladchik_purchase_promotion, is_xml_10_char, large_gap_continues_sentence,
+        lines_to_html, normalize_text, pages_to_text, push_styled_char, strip_page_label_lines,
+        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
+        text_to_safe_html,
     };
-    use crate::extraction::ExtractionEngine;
-    use crate::marker_worker::{MarkerLine, MarkerPage, MarkerResponse, MarkerRun};
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
@@ -1440,7 +1267,7 @@ mod tests {
     }
 
     #[test]
-    fn pdf_entry_point_rejects_non_pdf_and_oversized_data_before_loading_pdfium() {
+    fn pdf_entry_point_rejects_non_pdf_and_oversized_data_before_parsing() {
         assert!(matches!(
             extract_pdf(b"not a pdf", 1024),
             Err(error) if error == "source is not a PDF file"
@@ -1449,6 +1276,95 @@ mod tests {
             extract_pdf(b"%PDF-too-large", 4),
             Err(error) if error == "PDF exceeds configured size limit"
         ));
+    }
+
+    fn simple_pdf_pages(texts: &[&str]) -> Vec<u8> {
+        let font_id = 3 + 2 * texts.len();
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            format!(
+                "<< /Type /Pages /Kids [{}] /Count {} >>",
+                (0..texts.len())
+                    .map(|index| format!("{} 0 R", 3 + 2 * index))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                texts.len()
+            ),
+        ];
+        for (index, text) in texts.iter().enumerate() {
+            let page_id = 3 + 2 * index;
+            let content_id = page_id + 1;
+            objects.push(format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>"
+            ));
+            let content = format!("BT /F1 12 Tf 50 700 Td ({text}) Tj ET");
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len() + 1
+            ));
+        }
+        objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned());
+        let mut output = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(output.len());
+            output.extend(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+        }
+        let xref = output.len();
+        output.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        for offset in offsets {
+            output.extend(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        output.extend(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        output
+    }
+
+    #[test]
+    fn pdf_oxide_default_text_extraction_preserves_page_text_and_safe_html() {
+        let extracted = super::extract_pdf(
+            &simple_pdf_pages(&["First page text", "Second page text"]),
+            1024 * 1024,
+        )
+        .unwrap();
+        assert_eq!(extracted.page_count, 2);
+        assert!(
+            extracted.full_text.contains("First page text"),
+            "{}",
+            extracted.full_text
+        );
+        assert!(
+            extracted.full_text.contains("Second page text"),
+            "{}",
+            extracted.full_text
+        );
+        assert!(
+            extracted.full_text.find("First page text").unwrap()
+                < extracted.full_text.find("Second page text").unwrap()
+        );
+        assert!(
+            extracted.html.contains("First page text"),
+            "{}",
+            extracted.html
+        );
+        assert!(
+            extracted.html.contains("Second page text"),
+            "{}",
+            extracted.html
+        );
+        assert!(!extracted.html.contains("<script"));
+    }
+
+    #[test]
+    fn pdf_without_an_extractable_text_layer_fails_without_ocr() {
+        let error = super::extract_pdf(&simple_pdf_pages(&[""]), 1024 * 1024)
+            .expect_err("an empty text layer must not publish an empty article");
+        assert!(error.contains("no usable native text"), "{error}");
     }
 
     #[test]
@@ -1515,319 +1431,15 @@ mod tests {
     }
 
     #[test]
-    fn cache_fingerprint_includes_engine_and_processing_revision() {
+    fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(
-            processed,
-            cache_fingerprint_for(ExtractionEngine::Pdfium, source)
-        );
-        assert!(processed.starts_with("pdf-text-v13:pdfium:"));
-        assert_ne!(
-            processed,
-            cache_fingerprint_for(ExtractionEngine::Marker, source)
-        );
-        assert_ne!(processed, format!("pdf-text-v12:pdfium:{source}"));
-        assert_ne!(processed, format!("pdf-text-v13:{source}"));
+        assert_eq!(processed, format!("pdf-text-v15:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v14:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v13:pdfium:{source}"));
+        assert_ne!(processed, format!("pdf-text-v13:marker:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
-    }
-
-    fn marker_line(text: &str, size: f32, gap_before: f32) -> MarkerLine {
-        MarkerLine {
-            runs: vec![MarkerRun {
-                text: text.into(),
-                bold: false,
-                italic: false,
-            }],
-            size,
-            gap_before,
-            left: 50.0,
-        }
-    }
-
-    #[test]
-    fn marker_output_uses_the_shared_boundary_cleanup_and_safe_html() {
-        let response = MarkerResponse {
-            page_count: 3,
-            pages: vec![
-                MarkerPage {
-                    lines: vec![marker_line("КУПЛЕНО НА\nskladchik.ORG", 12.0, 0.0)],
-                },
-                MarkerPage {
-                    lines: vec![
-                        marker_line("1", 12.0, 0.0),
-                        marker_line("Native text title", 24.0, 32.0),
-                        marker_line(
-                            "Body with <script>alert('x')</script> and <b>markup</b>.",
-                            12.0,
-                            32.0,
-                        ),
-                    ],
-                },
-                MarkerPage {
-                    lines: vec![marker_line(AD, 12.0, 0.0)],
-                },
-            ],
-        };
-
-        let extracted = extract_marker_response(&response).unwrap();
-
-        assert_eq!(extracted.page_count, 3);
-        assert!(extracted.full_text.contains("Native text title"));
-        assert!(!extracted.full_text.contains("skladchik.ORG"));
-        assert!(!extracted.html.contains("<script"));
-        assert!(!extracted.html.contains("<b>"));
-        assert!(extracted.html.contains(
-            "Body with &lt;script&gt;alert('x')&lt;/script&gt; and &lt;b&gt;markup&lt;/b&gt;."
-        ));
-    }
-
-    #[test]
-    fn marker_output_preserves_emphasis_and_sponsr_chrome_cleanup() {
-        let mut title = marker_line("[Философское] «Старые деньги» — FAQ:", 24.0, 0.0);
-        title.runs[0].bold = true;
-        let mut disclaimer = marker_line("это не инвестиционные рекомендации", 12.0, 32.0);
-        disclaimer.runs[0].bold = true;
-        let response = MarkerResponse {
-            page_count: 1,
-            pages: vec![MarkerPage {
-                lines: vec![
-                    marker_line("1", 12.0, 0.0),
-                    marker_line("sponsr", 24.0, 0.0),
-                    marker_line("CrimsonAlter – Analytics", 9.0, 0.0),
-                    marker_line("27 февр 11:44", 9.0, 0.0),
-                    marker_line("58 минут", 9.0, 0.0),
-                    title,
-                    disclaimer,
-                    marker_line("Сразу к делу, коллеги.", 12.0, 32.0),
-                ],
-            }],
-        };
-
-        let extracted = extract_marker_response(&response).unwrap();
-
-        assert!(extracted.html.starts_with("<h1><strong>[Философское]"));
-        assert!(
-            extracted
-                .html
-                .contains("<p><strong>это не инвестиционные рекомендации</strong></p>")
-        );
-        assert!(extracted.html.contains("<p>Сразу к делу, коллеги.</p>"));
-        for chrome in ["sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"] {
-            assert!(
-                !extracted.html.contains(chrome),
-                "{chrome}: {}",
-                extracted.html
-            );
-        }
-    }
-
-    #[test]
-    fn marker_output_parses_literal_markdown_bold() {
-        let response = MarkerResponse {
-            page_count: 1,
-            pages: vec![MarkerPage {
-                lines: vec![
-                    marker_line("**это не инвестиционные рекомендации**", 12.0, 0.0),
-                    marker_line("Body text.", 12.0, 32.0),
-                ],
-            }],
-        };
-        let extracted = extract_marker_response(&response).unwrap();
-        assert!(
-            extracted
-                .html
-                .contains("<p><strong>это не инвестиционные рекомендации</strong></p>"),
-            "{}",
-            extracted.html
-        );
-    }
-
-    #[test]
-    fn marker_sponsr_output_uses_filename_title_recovery() {
-        let response = MarkerResponse {
-            page_count: 1,
-            pages: vec![MarkerPage {
-                lines: vec![
-                    marker_line("sponsr", 20.0, 0.0),
-                    marker_line("CrimsonAlter – Analytics", 12.0, 30.0),
-                    marker_line("27 февр 11:44", 12.0, 30.0),
-                    marker_line("58 минут", 12.0, 30.0),
-                    marker_line("Сразу к делу, коллеги.", 12.0, 30.0),
-                ],
-            }],
-        };
-        let mut extracted = extract_marker_response(&response).unwrap();
-        super::repair_sponsr_title_from_filename(
-            "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды.pdf",
-            &mut extracted,
-        );
-        assert!(
-            extracted
-                .html
-                .starts_with("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>"),
-            "{}",
-            extracted.html
-        );
-        for chrome in ["sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"] {
-            assert!(
-                !extracted.html.contains(chrome),
-                "{chrome}: {}",
-                extracted.html
-            );
-        }
-        assert!(extracted.html.contains("Сразу к делу, коллеги."));
-    }
-
-    #[test]
-    fn marker_real_native_fixture_applies_boundary_cleanup_and_safe_html() {
-        let response: MarkerResponse =
-            serde_json::from_str(include_str!("../tests/fixtures/marker/native-article.json"))
-                .unwrap();
-        let extracted = extract_marker_response(&response).unwrap();
-        assert!(
-            extracted
-                .html
-                .contains("Fixture article alpha wraps across two lines."),
-            "{}",
-            extracted.html
-        );
-        assert!(
-            extracted
-                .html
-                .contains("<strong>Bold </strong><em>italic<strong> both</strong></em> styles.")
-        );
-        assert!(extracted.html.contains("<strong>красный</strong>"));
-        for chrome in ["КУПЛЕНО", "skladchik", "<script", "<img", "onclick"] {
-            assert!(
-                !extracted.html.contains(chrome),
-                "{chrome}: {}",
-                extracted.html
-            );
-        }
-    }
-
-    #[test]
-    fn marker_real_scanned_fixture_preserves_ocr_text() {
-        let response: MarkerResponse = serde_json::from_str(include_str!(
-            "../tests/fixtures/marker/scanned-article.json"
-        ))
-        .unwrap();
-        let extracted = extract_marker_response(&response).unwrap();
-        assert!(
-            extracted
-                .html
-                .starts_with("<h1><strong>Scanned article title</strong></h1>")
-        );
-        assert!(
-            extracted
-                .html
-                .contains("Marker should recover this content with OCR.")
-        );
-        assert!(extracted.first_page.contains("Scanned article title"));
-    }
-
-    #[test]
-    fn marker_real_mixed_native_and_scanned_fixture_retains_both() {
-        let response: MarkerResponse = serde_json::from_str(include_str!(
-            "../tests/fixtures/marker/mixed-scan-article.json"
-        ))
-        .unwrap();
-        let extracted = extract_marker_response(&response).unwrap();
-        for retained in [
-            "Native header for mixed page",
-            "This native paragraph is in the text layer.",
-            "Scanned text in a small region must still trigger OCR.",
-            "Following native text stays outside the image.",
-        ] {
-            assert!(
-                extracted.html.contains(retained),
-                "{retained}: {}",
-                extracted.html
-            );
-        }
-        assert!(
-            extracted
-                .first_page
-                .contains("Native header for mixed page")
-        );
-        for unsafe_markup in ["<script", "<img", "onclick"] {
-            assert!(!extracted.html.contains(unsafe_markup));
-        }
-    }
-
-    #[test]
-    fn marker_real_sponsr_fixture_uses_filename_title_recovery() {
-        let response: MarkerResponse =
-            serde_json::from_str(include_str!("../tests/fixtures/marker/sponsr-article.json"))
-                .unwrap();
-        let mut extracted = extract_marker_response(&response).unwrap();
-        super::repair_sponsr_title_from_filename(
-            "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды.pdf",
-            &mut extracted,
-        );
-        assert!(extracted.html.starts_with(
-            "<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>"
-        ));
-        assert!(extracted.html.contains("Сразу к делу, коллеги."));
-        let notice = "<blockquote><p>Традиционные технические <strong>предуведомления:</strong></p>\n<p>Для новых читателей: <em>начинайте с этого текста.</em></p>\n<p>Продолжение <em><strong>технического предуведомления.</strong></em></p></blockquote>";
-        assert!(
-            extracted.html.contains(notice),
-            "notice paragraphs must stay in one quote: {}",
-            extracted.html
-        );
-        let quote_end = extracted.html.find("</blockquote>").unwrap();
-        let following = "На данном проекте периодически упоминается термин «старые деньги».";
-        assert!(
-            extracted.html.find(following).unwrap() > quote_end,
-            "following body text must stay outside the notice quote: {}",
-            extracted.html
-        );
-        for chrome in ["sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"] {
-            assert!(
-                !extracted.html.contains(chrome),
-                "{chrome}: {}",
-                extracted.html
-            );
-        }
-    }
-
-    #[test]
-    fn marker_real_promotion_fixture_drives_classification() {
-        let response: MarkerResponse =
-            serde_json::from_str(include_str!("../tests/fixtures/marker/promotion.json")).unwrap();
-        let extracted = extract_marker_response(&response).unwrap();
-        assert_eq!(
-            super::classify_promotion("club-promotion.pdf", &extracted.first_page),
-            "promotional"
-        );
-    }
-
-    #[test]
-    fn marker_output_rejects_inconsistent_page_counts() {
-        let response = MarkerResponse {
-            page_count: 2,
-            pages: vec![MarkerPage { lines: vec![] }],
-        };
-        assert!(extract_marker_response(&response).is_err());
-    }
-
-    #[tokio::test]
-    async fn marker_failure_is_reported_without_invoking_pdfium() {
-        let settings = crate::extraction::MarkerSettings {
-            endpoint: Some("http://127.0.0.1:1".into()),
-            timeout: std::time::Duration::from_millis(200),
-            max_response_bytes: 1024,
-            permits: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
-        };
-        let error =
-            super::extract_with_engine(ExtractionEngine::Marker, b"%PDF-1.4", 1024, &settings)
-                .await
-                .err()
-                .expect("Marker failure must be returned as an error");
-        assert!(error.contains("Marker worker"), "{error}");
-        assert!(!error.to_lowercase().contains("pdfium"), "{error}");
     }
 
     #[test]
@@ -1864,28 +1476,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_literal_markdown_bold_and_preserves_unmatched_markers() {
-        let mut runs = vec![StyledRun {
-            text: "**это не инвестиционные рекомендации**".into(),
-            bold: false,
-            italic: false,
-        }];
-        super::parse_markdown_bold(&mut runs);
-        assert_eq!(
-            super::styled_runs_html(&runs),
-            "<strong>это не инвестиционные рекомендации</strong>"
-        );
-
-        let mut unmatched = vec![StyledRun {
-            text: "**незакрытый маркер".into(),
-            bold: false,
-            italic: false,
-        }];
-        super::parse_markdown_bold(&mut unmatched);
-        assert_eq!(super::styled_runs_html(&unmatched), "**незакрытый маркер");
-    }
-
-    #[test]
     fn wraps_indented_technical_notice_blocks_in_one_blockquote() {
         let mut notice = line("Традиционные технические предуведомления:", 12.0);
         notice.left = 70.0;
@@ -1907,40 +1497,6 @@ mod tests {
         assert!(
             html.ends_with("<p>Обычный текст после предуведомления.</p>"),
             "{html}"
-        );
-    }
-
-    #[test]
-    fn marker_notice_paragraphs_stay_grouped_and_following_body_stays_outside() {
-        let mut notice = marker_line("Традиционные технические предуведомления:", 12.0, 30.0);
-        notice.left = 70.0;
-        let mut continuation =
-            marker_line("Для новых читателей: начинайте с этого текста.", 12.0, 30.0);
-        continuation.left = 70.0;
-        let mut ending = marker_line("Продолжение технического предуведомления.", 12.0, 30.0);
-        ending.left = 70.0;
-        let following = "На данном проекте периодически упоминается термин «старые деньги».";
-        let response = MarkerResponse {
-            page_count: 1,
-            pages: vec![MarkerPage {
-                lines: vec![
-                    marker_line("Сразу к делу, коллеги.", 12.0, 0.0),
-                    notice,
-                    continuation,
-                    ending,
-                    marker_line(following, 12.0, 30.0),
-                ],
-            }],
-        };
-        let extracted = extract_marker_response(&response).unwrap();
-        let expected = "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>";
-        assert!(extracted.html.contains(expected), "{}", extracted.html);
-        let quote_end = extracted.html.find("</blockquote>").unwrap();
-        let following_index = extracted.html.find(following).unwrap();
-        assert!(
-            following_index > quote_end,
-            "following body text must stay outside the notice quote: {}",
-            extracted.html
         );
     }
 

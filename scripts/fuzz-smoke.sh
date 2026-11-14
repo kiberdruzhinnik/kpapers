@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SECONDS_PER_TARGET="${FUZZ_SMOKE_SECONDS:-10}"
 FUZZ_RUST_TOOLCHAIN="${FUZZ_RUST_TOOLCHAIN:-nightly-2026-11-08}"
-PDFIUM_LIB_DIR="${PDFIUM_LIB_DIR:-/usr/local/lib}"
 WORK="$(mktemp -d)"
 OUTPUT_DIR="${FUZZ_OUTPUT_DIR:-}"
 preserve="${FUZZ_PRESERVE_OUTPUTS:-false}"
@@ -23,9 +22,6 @@ finish() {
 trap finish EXIT
 
 command -v cargo-fuzz >/dev/null 2>&1 || { echo 'cargo-fuzz is required' >&2; exit 1; }
-[[ -f "$PDFIUM_LIB_DIR/libpdfium.so" ]] || { echo "Pdfium library not found in $PDFIUM_LIB_DIR" >&2; exit 1; }
-
-export LD_LIBRARY_PATH="$PDFIUM_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for target in pdf_bytes untrusted_inputs; do
   corpus="$WORK/corpus-$target"
   artifacts="$WORK/artifacts-$target"

@@ -44,21 +44,9 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build the pinned Pdfium runtime
-        run: |
-          docker build --target pdfium --tag kpapers-pdfium:ci --file Dockerfile.api .
-          container="$(docker create kpapers-pdfium:ci)"
-          mkdir -p "$RUNNER_TEMP/pdfium"
-          docker cp "$container:/usr/local/lib/libpdfium.so" "$RUNNER_TEMP/pdfium/libpdfium.so"
-          docker rm "$container"
-
       - name: Fuzz each target
         run: ./scripts/fuzz-smoke.sh
         env:
-          PDFIUM_LIB_DIR: ${{ runner.temp }}/pdfium
           FUZZ_RUST_TOOLCHAIN: nightly-2026-11-08
           FUZZ_SMOKE_SECONDS: ${{ github.event_name == 'pull_request' && '15' || inputs.duration_seconds || '1800' }}
           FUZZ_OUTPUT_DIR: ${{ runner.temp }}/fuzz-data

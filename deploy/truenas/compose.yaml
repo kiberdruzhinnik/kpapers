@@ -5,11 +5,6 @@ services:
       - .env
     environment:
       DATABASE_URL: sqlite:///data/kpapers.sqlite?mode=rwc
-      PDF_EXTRACTION_ENGINE: ${PDF_EXTRACTION_ENGINE:-marker}
-      MARKER_WORKER_URL: http://kpapers-marker:8000
-      MARKER_WORKER_TIMEOUT_SECONDS: ${MARKER_WORKER_TIMEOUT_SECONDS:-120}
-      MARKER_WORKER_MAX_RESPONSE_BYTES: ${MARKER_WORKER_MAX_RESPONSE_BYTES:-8388608}
-      MARKER_WORKER_MAX_CONCURRENCY: ${MARKER_WORKER_MAX_CONCURRENCY:-1}
     volumes:
       - ./kpapers_data:/data
     healthcheck:
@@ -17,28 +12,6 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 10s
-      retries: 3
-    restart: unless-stopped
-
-  kpapers-marker:
-    image: ghcr.io/kiberdruzhinnik/kpapers-marker:${IMAGE_TAG:-latest}
-    environment:
-      MARKER_MODE: ${MARKER_MODE:-fast}
-      MARKER_WORKER_MAX_INPUT_BYTES: ${MARKER_WORKER_MAX_INPUT_BYTES:-26214400}
-      MARKER_WORKER_MAX_RESPONSE_BYTES: ${MARKER_WORKER_MAX_RESPONSE_BYTES:-8388608}
-      MARKER_WORKER_MAX_CONCURRENCY: ${MARKER_WORKER_MAX_CONCURRENCY:-1}
-      MARKER_WORKER_EXECUTION_TIMEOUT_SECONDS: ${MARKER_WORKER_EXECUTION_TIMEOUT_SECONDS:-110}
-    volumes:
-      - ./marker_models:/models
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)
-      interval: 30s
-      timeout: 10s
-      start_period: 900s
       retries: 3
     restart: unless-stopped
 

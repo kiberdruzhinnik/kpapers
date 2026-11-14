@@ -1,1 +1,0 @@
-"""Private Marker conversion worker."""

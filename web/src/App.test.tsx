@@ -9,7 +9,6 @@ const sampleFeed = {
   description: "Research notes",
   active: true,
   refresh_interval_seconds: null,
-  extraction_engine: null,
 }
 const secondFeed = { ...sampleFeed, id: "feed-2", display_name: "Grace Hopper", description: "Compiler notes" }
 const sampleMonth = {

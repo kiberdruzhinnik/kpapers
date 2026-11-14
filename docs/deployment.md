@@ -1,6 +1,6 @@
 # Deployment with Docker Compose
 
-The deployment runs one Rust API and scheduler, plus an Nginx web container. Only the web container publishes a host port. The API is available to Nginx on a private Compose network and stores SQLite and extracted content in the named `kpapers_data` volume. An optional Marker worker can be enabled without exposing another host port.
+The deployment runs one Rust API and scheduler, plus an Nginx web container. Only the web container publishes a host port. The API is available to Nginx on a private Compose network and stores SQLite and extracted content in the named `kpapers_data` volume. PDF text extraction runs in-process in the Rust API with `pdf_oxide`.
 
 ## Configure and start
 
@@ -56,43 +56,9 @@ The script generates and prints a random operator password, binds the web servic
 ./scripts/quickstart-down.sh
 ```
 
-## Optional Marker extraction
+## PDF text extraction
 
-Pdfium-only operation is the default. To enable Marker, build and start the optional worker profile:
-
-```sh
-docker compose --profile marker build marker
-docker compose --profile marker up -d marker
-docker compose ps marker
-```
-
-The worker has no published port. It joins the private `marker` Compose network and is reachable from the API at `http://marker:8000`. Set these values in `.env`:
-
-```dotenv
-MARKER_WORKER_URL=http://marker:8000
-# Use marker as the deployment default, or leave pdfium and select Marker per feed.
-PDF_EXTRACTION_ENGINE=marker
-```
-
-Then recreate the API so it reads the new environment:
-
-```sh
-docker compose up -d api
-```
-
-The first worker startup downloads Marker's pinned models into the `marker_models` volume and can take several minutes. The worker health check reports starting until models are loaded; its `start_period` is 15 minutes. Model files are not included in the image and are not part of the `kpapers_data` backup because they can be downloaded again. If the host has restricted egress, populate `marker_models` before enabling the profile.
-
-Default worker limits are one concurrent conversion, a 25 MiB input, an 8 MiB response and a 110-second conversion timeout. The API has a 120-second request timeout and its own concurrency limit. Marker is CPU-intensive; see [Marker extraction](marker-evaluation.md) for sizing, pinned versions and license notes.
-
-To roll back to Pdfium-only operation:
-
-```sh
-# Set PDF_EXTRACTION_ENGINE=pdfium in .env and/or select Pdfium in each feed.
-docker compose up -d api
-docker compose --profile marker stop marker
-```
-
-The next refresh reprocesses affected documents with Pdfium because the engine is part of the cache identity. Existing successful cached content remains available if a refresh fails. The worker can be removed with `docker compose --profile marker rm -sf marker`; remove the `marker_models` volume only when the model cache is no longer needed.
+The API extracts each PDF page with the default plain-text API in `pdf_oxide`. Extraction runs in-process, without OCR or an auxiliary worker. Scanned-only PDFs without an extractable text layer are reported as failures; the last successful cached content remains available.
 
 ## Backup
 

@@ -1,10 +1,7 @@
-use axum::Extension;
 use axum::extract::{Path, Query, State};
 use chrono::{DateTime, Datelike, Utc};
 use sqlx::{FromRow, SqlitePool};
 use std::time::Duration;
-
-use crate::extraction::ExtractionSettings;
 
 #[derive(FromRow)]
 struct DueMonth {
@@ -25,15 +22,15 @@ struct Job {
     force: i64,
 }
 
-pub async fn run(pool: SqlitePool, settings: ExtractionSettings) {
+pub async fn run(pool: SqlitePool) {
     let mut ticker = tokio::time::interval(Duration::from_secs(5));
     loop {
         ticker.tick().await;
-        run_tick(&pool, &settings).await;
+        run_tick(&pool).await;
     }
 }
 
-async fn run_tick(pool: &SqlitePool, settings: &ExtractionSettings) {
+async fn run_tick(pool: &SqlitePool) {
     if let Err(error) = schedule_due(pool).await {
         tracing::error!(
             event = "scheduler_enqueue_failed",
@@ -43,7 +40,7 @@ async fn run_tick(pool: &SqlitePool, settings: &ExtractionSettings) {
         );
     }
     loop {
-        match process_one(pool, settings).await {
+        match process_one(pool).await {
             Ok(true) => continue,
             Ok(false) => break,
             Err(error) => {
@@ -108,10 +105,7 @@ async fn schedule_due_at(
     Ok(())
 }
 
-async fn process_one(
-    pool: &SqlitePool,
-    settings: &ExtractionSettings,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+async fn process_one(pool: &SqlitePool) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let Some(job) = sqlx::query_as::<_, Job>("SELECT id,scope,feed_id,year,month_id,force FROM refresh_jobs WHERE status='queued' ORDER BY requested_at LIMIT 1")
         .fetch_optional(pool).await? else { return Ok(false); };
     sqlx::query("UPDATE refresh_jobs SET status='running',started_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'").bind(&job.id).execute(pool).await?;
@@ -134,7 +128,6 @@ async fn process_one(
                 let _ = feed_api::extract_document(
                     Path(document.id),
                     State(pool.clone()),
-                    Extension(settings.clone()),
                     Query(feed_api::ForceQuery {
                         force: Some(job.force != 0),
                     }),
@@ -358,9 +351,7 @@ mod tests {
         sqlx::query("INSERT INTO refresh_jobs (id, scope, feed_id, year, month_id, force, status) VALUES ('job', 'month', 'feed', 2026, 'month', 0, 'queued')")
             .execute(&pool).await.unwrap();
 
-        let (processed, logs) =
-            crate::test_support::capture_logs(process_one(&pool, &ExtractionSettings::default()))
-                .await;
+        let (processed, logs) = crate::test_support::capture_logs(process_one(&pool)).await;
         assert!(processed.unwrap());
         let events = crate::test_support::json_events(&logs);
         let failure = events
@@ -399,9 +390,7 @@ mod tests {
         let (pool, path) = crate::test_support::database().await;
         pool.close().await;
 
-        let ((), logs) =
-            crate::test_support::capture_logs(run_tick(&pool, &ExtractionSettings::default()))
-                .await;
+        let ((), logs) = crate::test_support::capture_logs(run_tick(&pool)).await;
         let events = crate::test_support::json_events(&logs);
         for name in ["scheduler_enqueue_failed", "scheduler_job_failed"] {
             let event = events
