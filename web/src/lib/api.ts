@@ -39,6 +39,16 @@ export type SourceDocument = {
   last_error: string | null
 }
 
+export type ReviewQueueMode = "needs-review" | "archived"
+export type ReviewQueueDocument = SourceDocument & {
+  feed_id: string
+  feed_name: string
+  year: number
+  month: number
+  month_id: string
+  archived: boolean
+}
+
 export type QueuedRefresh = { job_id: string; status: string }
 export type OverviewSummary = { source_folder_count: number; needs_review_count: number }
 export type DiscoveryResult = { discovered_pdfs: number }
@@ -109,6 +119,9 @@ export const api = {
   logout: () => request<void>("/api/management/session", json("DELETE")),
   feeds: () => request<Feed[]>("/api/management/feeds"),
   overview: () => request<OverviewSummary>("/api/management/overview"),
+  reviewQueue: (archived: boolean) => request<ReviewQueueDocument[]>(
+    `/api/management/review-queue?archived=${archived}`,
+  ),
   createFeed: (payload: Pick<Feed, "display_name" | "description" | "extraction_engine"> & { refresh_interval_seconds: number | null }) =>
     request<Feed>("/api/management/feeds", json("POST", payload)),
   updateFeed: (id: string, payload: Pick<Feed, "display_name" | "description" | "extraction_engine"> & { refresh_interval_seconds: number | null }) =>

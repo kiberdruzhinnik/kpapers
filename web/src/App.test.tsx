@@ -43,6 +43,7 @@ function installApi(initiallySignedIn = false, overviewResponse: () => Promise<R
     }
     if (path === "/api/management/feeds") return signedIn ? response([sampleFeed, secondFeed]) : response(null, 401)
     if (path === "/api/management/overview") return signedIn ? overviewResponse() : response(null, 401)
+    if (path === "/api/management/review-queue?archived=false" || path === "/api/management/review-queue?archived=true") return signedIn ? response([]) : response(null, 401)
     if (path === "/api/management/feeds/feed-1/years") return signedIn ? response([{ feed_id: "feed-1", year: 2026, active: true }]) : response(null, 401)
     if (path === "/api/management/feeds/feed-2/years") return signedIn ? response([{ feed_id: "feed-2", year: 2025, active: true }]) : response(null, 401)
     if (path === "/api/management/feeds/feed-1/years/2026/months") return signedIn ? response([sampleMonth]) : response(null, 401)
@@ -138,6 +139,24 @@ describe("operator session and dashboard shell", () => {
     expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1")
   })
 
+  it("opens the archived queue directly and preserves the source browser route", async () => {
+    const fetchMock = installApi(true)
+    window.history.replaceState({}, "", "/manage/pdf-review?queue=archived")
+    const user = userEvent.setup()
+    render(<App />)
+
+    expect(await screen.findByRole("heading", { name: "Archived documents needing attention" })).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/manage/pdf-review")
+    expect(window.location.search).toBe("?queue=archived")
+    expect(fetchMock).toHaveBeenCalledWith("/api/management/review-queue?archived=true", expect.objectContaining({ credentials: "same-origin" }))
+
+    await user.click(screen.getByRole("button", { name: "Browse by source" }))
+    await waitFor(() => expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1"))
+    expect(window.location.search).toBe("")
+    expect(screen.getByRole("button", { name: "Browse by source" })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.queryByRole("heading", { name: "Archived documents needing attention" })).not.toBeInTheDocument()
+  })
+
   it("returns from PDF review to the selected feed", async () => {
     installApi(true)
     window.history.replaceState({}, "", "/manage/pdf-review/feed-1/2026/month-1")
@@ -228,7 +247,19 @@ describe("operator session and dashboard shell", () => {
       expect(screen.getByTestId("source-folder-count")).toHaveTextContent("0")
       expect(screen.getByTestId("needs-review-count")).toHaveTextContent("0")
       expect(screen.getByText("No documents need attention")).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Open PDF review" })).toBeInTheDocument()
     })
+  })
+
+  it("opens the active Needs review queue from Overview when attention is needed", async () => {
+    installApi(true)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole("button", { name: "Open Needs review" }))
+    expect(await screen.findByRole("heading", { name: "Documents needing attention" })).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/manage/pdf-review")
+    expect(window.location.search).toBe("?queue=needs-review")
   })
 
   it("shows loading and an unavailable state for Overview count requests", async () => {

@@ -100,10 +100,12 @@ pub struct OverviewSummary {
     pub needs_review_count: i64,
 }
 
+const NEEDS_REVIEW_PREDICATE: &str = "sd.extraction_status IN ('pending', 'failure') OR sd.promotional_classification NOT IN ('publish', 'promotional')";
+
 pub async fn overview_summary(
     State(pool): State<SqlitePool>,
 ) -> Result<Json<OverviewSummary>, StatusCode> {
-    sqlx::query_as::<_, OverviewSummary>(
+    let query = format!(
         "SELECT \
             (SELECT COUNT(*) FROM feed_months fm \
              JOIN feed_years fy ON fy.feed_id = fm.feed_id AND fy.year = fm.year \
@@ -114,14 +116,65 @@ pub async fn overview_summary(
              JOIN feed_years fy ON fy.feed_id = fm.feed_id AND fy.year = fm.year \
              JOIN feeds f ON f.id = fm.feed_id \
              WHERE fm.active = 1 AND fy.active = 1 AND f.active = 1 \
-               AND (sd.extraction_status IN ('pending', 'failure') \
-                    OR sd.promotional_classification NOT IN ('publish', 'promotional'))) \
+               AND ({NEEDS_REVIEW_PREDICATE})) \
              AS needs_review_count",
-    )
-    .fetch_one(&pool)
-    .await
-    .map(Json)
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    sqlx::query_as::<_, OverviewSummary>(&query)
+        .fetch_one(&pool)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Deserialize, Default)]
+pub struct ReviewQueueFilter {
+    #[serde(default)]
+    pub archived: bool,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct ReviewQueueDocument {
+    pub id: String,
+    pub filename: String,
+    pub source_url: String,
+    pub promotional_classification: String,
+    pub promotional_override: Option<String>,
+    pub extraction_status: String,
+    pub last_error: Option<String>,
+    pub feed_id: String,
+    pub feed_name: String,
+    pub year: i64,
+    pub month: i64,
+    pub month_id: String,
+    pub archived: bool,
+}
+
+pub async fn list_review_queue(
+    State(pool): State<SqlitePool>,
+    Query(filter): Query<ReviewQueueFilter>,
+) -> Result<Json<Vec<ReviewQueueDocument>>, StatusCode> {
+    let query = format!(
+        "SELECT sd.id, sd.filename, sd.source_url, sd.promotional_classification, \
+                sd.promotional_override, sd.extraction_status, sd.last_error, \
+                f.id AS feed_id, f.display_name AS feed_name, fy.year, fm.month, \
+                fm.id AS month_id, \
+                CASE WHEN f.active = 0 OR fy.active = 0 OR fm.active = 0 \
+                     THEN 1 ELSE 0 END AS archived \
+         FROM source_documents sd \
+         JOIN feed_months fm ON fm.id = sd.month_id \
+         JOIN feed_years fy ON fy.feed_id = fm.feed_id AND fy.year = fm.year \
+         JOIN feeds f ON f.id = fm.feed_id \
+         WHERE ({NEEDS_REVIEW_PREDICATE}) \
+           AND CASE WHEN f.active = 0 OR fy.active = 0 OR fm.active = 0 \
+                    THEN 1 ELSE 0 END = ? \
+         ORDER BY f.display_name, fy.year DESC, fm.month, sd.filename",
+    );
+    sqlx::query_as::<_, ReviewQueueDocument>(&query)
+        .bind(filter.archived)
+        .fetch_all(&pool)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[derive(Deserialize)]
@@ -1110,6 +1163,10 @@ mod tests {
             ('success-doc', 'active-month', '/success.pdf', 'success.pdf', 'https://example.test/success.pdf', 'success', 10, 'success'), \
             ('archived-doc', 'archived-month', '/archived.pdf', 'archived.pdf', 'https://example.test/archived.pdf', 'archived', 10, 'failure')")
             .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes, extraction_status) VALUES \
+            ('archived-year-doc', 'archived-year-month', '/year.pdf', 'year.pdf', 'https://example.test/year.pdf', 'year', 10, 'failure'), \
+            ('archived-feed-doc', 'inactive-feed-month', '/feed.pdf', 'feed.pdf', 'https://example.test/feed.pdf', 'feed', 10, 'pending')")
+            .execute(&pool).await.unwrap();
         sqlx::query(
             "UPDATE source_documents SET promotional_override='include' WHERE id='failed-doc'",
         )
@@ -1120,6 +1177,69 @@ mod tests {
         let Json(summary) = overview_summary(State(pool.clone())).await.unwrap();
         assert_eq!(summary.source_folder_count, 1);
         assert_eq!(summary.needs_review_count, 2);
+
+        let Json(active_queue) =
+            list_review_queue(State(pool.clone()), Query(ReviewQueueFilter::default()))
+                .await
+                .unwrap();
+        assert_eq!(
+            active_queue
+                .iter()
+                .map(|document| document.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["failed-doc", "pending-doc"]
+        );
+        assert!(active_queue.iter().all(|document| !document.archived));
+        assert_eq!(active_queue[0].feed_name, "Active");
+        assert_eq!(active_queue[0].year, 2026);
+        assert_eq!(active_queue[0].month, 1);
+        assert_eq!(active_queue[0].month_id, "active-month");
+
+        let Json(archived_queue) = list_review_queue(
+            State(pool.clone()),
+            Query(ReviewQueueFilter { archived: true }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            archived_queue
+                .iter()
+                .map(|document| document.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["archived-doc", "archived-year-doc", "archived-feed-doc"]
+        );
+        assert!(archived_queue.iter().all(|document| document.archived));
+
+        assert_eq!(
+            restore_month(Path("archived-month".into()), State(pool.clone())).await,
+            StatusCode::NO_CONTENT
+        );
+        let Json(restored_queue) =
+            list_review_queue(State(pool.clone()), Query(ReviewQueueFilter::default()))
+                .await
+                .unwrap();
+        assert!(
+            restored_queue
+                .iter()
+                .any(|document| document.id == "archived-doc")
+        );
+        let Json(remaining_archived) = list_review_queue(
+            State(pool.clone()),
+            Query(ReviewQueueFilter { archived: true }),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !remaining_archived
+                .iter()
+                .any(|document| document.id == "archived-doc")
+        );
+        let Json(restored_summary) = overview_summary(State(pool.clone())).await.unwrap();
+        assert_eq!(
+            restored_summary.needs_review_count,
+            restored_queue.len() as i64
+        );
+        assert_eq!(restored_summary.needs_review_count, 3);
 
         crate::test_support::cleanup(pool, path).await;
     }

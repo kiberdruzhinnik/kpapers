@@ -26,7 +26,9 @@ Open `/manage/feeds` and select **Open feed** on an author row. The list separat
 
 ## Review discovered PDFs
 
-Open **Manage source**, then select **Fetch and parse** for a linked month to list its root PDFs and extract/cache native text. The app ignores subfolders. Select **Review PDFs** to open `/manage/pdf-review` with the selected feed/year/month in its URL and inspect discovered files. Each file shows its name, automatic promotional decision, and extraction status. Use the choice menu to publish a file, skip it as promotional, or return it to the automatic decision. The override is stored with the source document and can be changed later. The automatic classification stays visible independently of the override. Including a PDF does not bypass successful extraction; failed PDFs offer **Retry extraction**.
+Open **Manage source**, then select **Fetch and parse** for a linked month to list its root PDFs and extract/cache native text. The app ignores subfolders. Select **Review PDFs** to open `/manage/pdf-review` with the selected feed/year/month in its URL and inspect discovered files. In PDF review, use **Needs review** for a global list across active feeds, years, and months, or **Archived** for documents needing attention in archived scopes. Overview links directly to **Needs review** when active documents require attention. Choose **Browse by source** to return to feed/year/month browsing.
+
+Each file shows its name, automatic promotional decision, and extraction status. Use the choice menu to publish a file, skip it as promotional, or return it to the automatic decision. The override is stored with the source document and can be changed later. The automatic classification stays visible independently of the override. Including a PDF does not bypass successful extraction; failed active PDFs offer **Retry extraction**. Archived queue items still allow publication decisions, but their source PDF cannot be opened and extraction cannot be retried until the archived feed, year, or month is restored.
 
 ## Public access
 

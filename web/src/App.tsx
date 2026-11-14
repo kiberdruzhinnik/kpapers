@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { BookOpenText, CheckCircle2, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, ShieldCheck } from "lucide-react"
 import { BrowserRouter, Link, useLocation, useNavigate } from "react-router-dom"
-import { ApiError, api, type Feed, type OverviewSummary } from "@/lib/api"
+import { ApiError, api, type Feed, type OverviewSummary, type ReviewQueueMode } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -39,13 +39,17 @@ function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 type ReviewSelection = { feedId: string; year?: number; monthId?: string }
-type DashboardRoute = { creating?: boolean; section: Section; feedId?: string; reviewSelection?: ReviewSelection } | null
+type DashboardRoute = { creating?: boolean; section: Section; feedId?: string; reviewSelection?: ReviewSelection; reviewQueueMode?: ReviewQueueMode } | null
 
-function routeFromPath(pathname: string): DashboardRoute {
+function routeFromPath(pathname: string, search = ""): DashboardRoute {
   if (["/", "/manage", "/manage/"].includes(pathname)) return { section: "Overview" }
   if (pathname === "/manage/feeds/new") return { section: "Feeds", creating: true }
   if (pathname === "/manage/feeds") return { section: "Feeds" }
-  if (pathname === "/manage/pdf-review") return { section: "PDF review" }
+  if (pathname === "/manage/pdf-review") {
+    const queue = new URLSearchParams(search).get("queue")
+    const reviewQueueMode = queue === "needs-review" || queue === "archived" ? queue : undefined
+    return { section: "PDF review", reviewQueueMode }
+  }
 
   const feedMatch = pathname.match(/^\/manage\/feeds\/([^/]+)$/)
   if (feedMatch) {
@@ -229,10 +233,11 @@ export function DashboardShell({ children, onLogout, section, onSectionChange, b
   )
 }
 
-function Overview({ feedCount, onNavigate, onCreate, summary, summaryLoading, summaryError }: {
+function Overview({ feedCount, onNavigate, onCreate, onReviewQueue, summary, summaryLoading, summaryError }: {
   feedCount: number
   onNavigate: (section: Section) => void
   onCreate: () => void
+  onReviewQueue: () => void
   summary: OverviewSummary | null
   summaryLoading: boolean
   summaryError: string | null
@@ -279,7 +284,7 @@ function Overview({ feedCount, onNavigate, onCreate, summary, summaryLoading, su
               : unavailable ? <p role="status" className="text-sm text-muted-foreground">Review queue unavailable. Try reloading the page.</p>
               : reviewCount === 0 ? <div className="flex items-start gap-2 text-success"><CheckCircle2 aria-hidden="true" className="mt-0.5 size-5 shrink-0" /><div><p className="text-sm font-medium">No documents need attention</p><p className="mt-1 text-xs text-muted-foreground">The review queue is empty.</p></div></div>
               : <p className="text-sm font-medium">{reviewCount} {reviewCount === 1 ? "document needs" : "documents need"} attention</p>}
-            <Button onClick={() => onNavigate("PDF review")} variant="outline">Open PDF review</Button>
+            <Button onClick={reviewCount && reviewCount > 0 ? onReviewQueue : () => onNavigate("PDF review")} variant="outline">{reviewCount && reviewCount > 0 ? "Open Needs review" : "Open PDF review"}</Button>
           </CardContent>
         </Card>
       </div>
@@ -297,12 +302,16 @@ function AppContent() {
   const [summary, setSummary] = useState<OverviewSummary | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [summaryError, setSummaryError] = useState<string | null>(null)
-  const route = useMemo(() => routeFromPath(location.pathname), [location.pathname])
+  const route = useMemo(() => routeFromPath(location.pathname, location.search), [location.pathname, location.search])
   const section = route?.section ?? "Overview"
   const reviewSelection = route?.reviewSelection ?? null
+  const reviewQueueMode = route?.reviewQueueMode ?? null
   const requestedFeedId = route?.feedId ?? reviewSelection?.feedId
   const updateReviewSelection = useCallback((selection: ReviewSelection | null) => {
     navigate(selection ? reviewPath(selection) : "/manage/pdf-review")
+  }, [navigate])
+  const updateReviewQueue = useCallback((mode: ReviewQueueMode | null) => {
+    navigate(mode ? `/manage/pdf-review?queue=${mode}` : "/manage/pdf-review")
   }, [navigate])
 
   const restoreSession = useCallback(async () => {
@@ -419,12 +428,12 @@ function AppContent() {
         ? <SignInPanel error={authError} onSubmit={signIn} pending={loginPending} />
         : <DashboardShell breadcrumb={section === "Feeds" && (route.creating || route.feedId) ? <><span aria-hidden="true">/</span><span className="max-w-40 truncate">{route.creating ? "Create a feed" : feeds.find((feed) => feed.id === route.feedId)?.display_name}</span></> : undefined} feedCount={feeds.filter((feed) => feed.active).length} onLogout={() => void signOut()} onSectionChange={(nextSection) => navigate(sectionPath(nextSection))} section={section}>
           {section === "Overview"
-            ? <Overview onCreate={() => navigate("/manage/feeds/new")} feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
+            ? <Overview onCreate={() => navigate("/manage/feeds/new")} feedCount={feeds.filter((feed) => feed.active).length} onNavigate={(nextSection) => navigate(sectionPath(nextSection))} onReviewQueue={() => navigate("/manage/pdf-review?queue=needs-review")} summary={summary} summaryLoading={summaryLoading} summaryError={summaryError} />
             : section === "Feeds"
               ? route.creating
                 ? <CreateFeed onCancel={() => navigate("/manage/feeds")} onCreated={(feed) => { setFeeds((current) => [...current, feed]); navigate(feedPath(feed.id)) }} />
                 : <FeedManagement onCreate={() => navigate("/manage/feeds/new")} feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(reviewPath({ feedId: month.feed_id, year: month.year, monthId: month.id }))} onSelectFeed={(feedId) => navigate(feedPath(feedId))} selectedFeedId={route.feedId ?? null} />
-              : <PdfReview feeds={feeds} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(feedPath(reviewSelection?.feedId))} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onSelectionChange={updateReviewSelection} />}
+              : <PdfReview feeds={feeds} initialQueueMode={reviewQueueMode} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(feedPath(reviewSelection?.feedId))} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onQueueModeChange={updateReviewQueue} onSelectionChange={updateReviewSelection} />}
         </DashboardShell>}
     </>
   )
