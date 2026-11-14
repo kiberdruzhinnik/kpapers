@@ -1,6 +1,7 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/pdf_oxide ./vendor/pdf_oxide
 
 # Compile dependencies against a stub binary so source-only changes can reuse
 # the dependency layer. The lockfile and toolchain image still invalidate it.
