@@ -10,7 +10,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 13;
+const EXTRACTION_PIPELINE_REVISION: u32 = 14;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -788,16 +788,21 @@ fn large_gap_continues_sentence(previous: &StyledLine, next: &StyledLine) -> boo
     let previous_text = previous.text();
     let next_text = next.text();
     let previous_end = previous_text.trim_end();
-    let Some(last_char) = previous_end.chars().next_back() else {
-        return false;
-    };
-    if !matches!(last_char, ',' | ';' | ':') {
-        return false;
-    }
     let Some(first_char) = next_text.trim_start().chars().next() else {
         return false;
     };
-    if !first_char.is_lowercase() {
+
+    let continues_after_punctuation = previous_end
+        .chars()
+        .next_back()
+        .is_some_and(|last_char| matches!(last_char, ',' | ';' | ':'))
+        && first_char.is_lowercase();
+    let continues_after_honorific = previous_end
+        .to_lowercase()
+        .strip_suffix("ув.")
+        .is_some_and(|prefix| prefix.chars().next_back().is_none_or(char::is_whitespace))
+        && first_char.is_uppercase();
+    if !continues_after_punctuation && !continues_after_honorific {
         return false;
     }
 
@@ -1308,6 +1313,34 @@ mod tests {
     }
 
     #[test]
+    fn large_gap_continuation_recognizes_honorific_before_uppercase_text() {
+        for (previous, next) in [
+            (
+                "Понедельник, ув. друзья, и в кабине «Орбитального экспресса» ув.",
+                "Александр Романов с захватывающим вопросом о вопросах.",
+            ),
+            (
+                "В первую очередь стоит отметить ценность стартового тезиса ув.",
+                "Собеседника. Идея «геноцида неизвестности» соответствует.",
+            ),
+        ] {
+            assert!(large_gap_continues_sentence(
+                &line(previous, 15.0),
+                &line(next, 15.0)
+            ));
+        }
+
+        assert!(!large_gap_continues_sentence(
+            &line("Первый абзац полностью завершен.", 15.0),
+            &line("Следующий абзац начинается здесь.", 15.0),
+        ));
+        assert!(!large_gap_continues_sentence(
+            &line("Составное слово содержитнеув.", 15.0),
+            &line("Продолжение начинается здесь.", 15.0),
+        ));
+    }
+
+    #[test]
     fn large_gap_continuation_rejects_incompatible_alignment_and_style() {
         let previous = line("A sentence continues,", 15.0);
         let mut next = line("with matching layout.", 15.0);
@@ -1522,13 +1555,13 @@ mod tests {
             processed,
             cache_fingerprint_for(ExtractionEngine::Pdfium, source)
         );
-        assert!(processed.starts_with("pdf-text-v13:pdfium:"));
+        assert!(processed.starts_with("pdf-text-v14:pdfium:"));
         assert_ne!(
             processed,
             cache_fingerprint_for(ExtractionEngine::Marker, source)
         );
-        assert_ne!(processed, format!("pdf-text-v12:pdfium:{source}"));
-        assert_ne!(processed, format!("pdf-text-v13:{source}"));
+        assert_ne!(processed, format!("pdf-text-v13:pdfium:{source}"));
+        assert_ne!(processed, format!("pdf-text-v14:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
     }
@@ -1995,6 +2028,30 @@ mod tests {
 
         assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
         assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn joins_reported_honorific_continuations_in_text_and_html() {
+        let cases = [
+            (
+                "Понедельник, ув. друзья, и в кабине «Орбитального экспресса» ув.",
+                "Александр Романов с захватывающим вопросом о вопросах.",
+            ),
+            (
+                "В первую очередь стоит отметить ценность стартового тезиса ув.",
+                "Собеседника. Идея «геноцида неизвестности», наступившего сейчас, безусловно соответствует",
+            ),
+        ];
+
+        for (first, second) in cases {
+            let mut continuation = line(second, 15.0);
+            continuation.gap_before = 39.0;
+            let pages = vec![vec![line(first, 15.0), continuation]];
+            let expected = format!("{first} {second}");
+
+            assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
+            assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+        }
     }
 
     #[test]
