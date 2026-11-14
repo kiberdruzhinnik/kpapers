@@ -37,6 +37,13 @@ pub fn cache_fingerprint(source_fingerprint: &str) -> String {
 }
 
 pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        extract_pdf_inner(bytes, maximum_bytes)
+    }))
+    .unwrap_or_else(|_| Err("PDF parser encountered malformed input".into()))
+}
+
+fn extract_pdf_inner(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, String> {
     if bytes.len() > maximum_bytes {
         return Err("PDF exceeds configured size limit".into());
     }
@@ -1346,6 +1353,16 @@ mod tests {
             extract_pdf(b"%PDF-too-large", 4),
             Err(error) if error == "PDF exceeds configured size limit"
         ));
+    }
+
+    #[test]
+    fn malformed_tounicode_cmap_does_not_panic() {
+        let bytes = include_bytes!("../fuzz/corpus/pdf_bytes/cmap-invalid-utf8.pdf");
+
+        let result = std::panic::catch_unwind(|| extract_pdf(bytes, 2 * 1024 * 1024));
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_err());
     }
 
     fn simple_pdf_pages(texts: &[&str]) -> Vec<u8> {
