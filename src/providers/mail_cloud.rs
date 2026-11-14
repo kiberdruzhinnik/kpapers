@@ -113,6 +113,7 @@ pub async fn download(
     if pdf.size > maximum_bytes {
         return Err("file exceeds configured size limit".into());
     }
+    super::validate_download_url("mail_cloud", &pdf.download_url)?;
     let client = super::safe_client("mail", std::time::Duration::from_secs(60))?;
     let response = client
         .get(&pdf.download_url)
@@ -140,6 +141,26 @@ pub async fn download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn download_rejects_disallowed_url_before_request() {
+        let pdf = RemotePdf {
+            provider_id: "id".into(),
+            path: "article.pdf".into(),
+            filename: "article.pdf".into(),
+            size: 10,
+            modified: None,
+            fingerprint: "fingerprint".into(),
+            download_url: "http://127.0.0.1:1/internal".into(),
+            public_url: "https://cloud.mail.ru/public/owner/token".into(),
+        };
+
+        let error = download(&pdf, 1024).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "provider returned a download URL outside its HTTPS host allowlist"
+        );
+    }
 
     #[test]
     fn folder_payload_accepts_optional_metadata_and_ignores_unknown_fields() {

@@ -39,6 +39,29 @@ The system SHALL cache each discovered file's provider metadata, content fingerp
 - **WHEN** a refresh detects a changed source fingerprint
 - **THEN** the system downloads and processes the changed PDF and updates its cached version
 
+### Requirement: Validate provider PDF download destinations
+Before fetching a discovered PDF, the system SHALL validate the initial download URL against the HTTPS host allowlist for the configured provider. URLs that do not satisfy the provider's scheme, port, credential, and host constraints SHALL be rejected without making the request.
+
+#### Scenario: Yandex Disk returns an allowed download destination
+- **WHEN** a Yandex Disk PDF is fetched from an HTTPS destination on the Yandex download host allowlist
+- **THEN** the system may request that destination subject to the existing timeout, response-size, and redirect controls
+
+#### Scenario: Yandex Disk returns a destination outside its allowlist
+- **WHEN** a Yandex Disk PDF download URL uses an unapproved host, scheme, port, or embedded credentials
+- **THEN** the system rejects the URL before making the download request and records the extraction as failed
+
+#### Scenario: Mail Cloud returns an allowed download destination
+- **WHEN** a Mail Cloud PDF is fetched from an HTTPS destination on the Mail Cloud download host allowlist
+- **THEN** the system may request that destination subject to the existing timeout, response-size, and redirect controls
+
+#### Scenario: Mail Cloud returns a destination outside its allowlist
+- **WHEN** a Mail Cloud PDF download URL uses an unapproved host, scheme, port, or embedded credentials
+- **THEN** the system rejects the URL before making the download request and records the extraction as failed
+
+#### Scenario: Download destination is rejected during refresh
+- **WHEN** a provider returns an invalid PDF download destination for a document with previously cached content
+- **THEN** the system records the refresh failure and retains the last successfully processed cached entry
+
 ### Requirement: Preserve cached entries on refresh failure
 The system SHALL retain the last successfully processed version of an entry when a later provider request or extraction attempt fails.
 
@@ -302,3 +325,22 @@ The system SHALL include the `pdf_oxide` engine identity and processing revision
 #### Scenario: Cached content is reused after a failed refresh
 - **WHEN** a later refresh reuses a matching successful cache after a conversion failure
 - **THEN** the cached entry remains available in RSS and the document's recovery state reflects the successful reuse
+
+### Requirement: Preserve spacing and punctuation between extracted PDF words
+The system SHALL reconstruct readable text from extracted PDF words without inserting spaces that split compounds or separate punctuation from adjacent text, while preserving spaces between distinct words.
+
+#### Scenario: Preserve hyphenated compounds
+- **WHEN** extracted PDF words form a hyphenated compound such as `поп-психологии`, `по-идиотски`, or `культурно-техническом`
+- **THEN** extracted text and published HTML contain the compound without spaces around its hyphen
+
+#### Scenario: Keep punctuation attached to adjacent text
+- **WHEN** extracted PDF words include punctuation such as a comma or closing guillemet
+- **THEN** extracted text and published HTML contain no space before that punctuation
+
+#### Scenario: Preserve spaces between distinct words
+- **WHEN** extracted PDF words are separated as distinct prose words
+- **THEN** extracted text and published HTML include the required inter-word spaces
+
+#### Scenario: Preserve italic styling while reconstructing spacing
+- **WHEN** a compound, punctuation mark, or closing guillemet spans differently styled extracted words
+- **THEN** text spacing and punctuation remain correct and the applicable emphasis markup is preserved

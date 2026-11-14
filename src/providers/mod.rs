@@ -156,23 +156,33 @@ mod tests {
     }
 
     #[test]
-    fn download_url_validation_rejects_unsafe_schemes_hosts_and_credentials() {
-        assert!(
-            validate_download_url("yandex_disk", "https://storage.yandex.net/file.pdf").is_ok()
-        );
-        assert!(validate_download_url("mail_cloud", "https://datacloudmail.ru/file").is_ok());
+    fn download_url_validation_enforces_provider_specific_https_allowlists() {
+        for (provider, input) in [
+            ("yandex_disk", "https://storage.yandex.net/file.pdf"),
+            ("yandex_disk", "https://cdn.storage.yandex.net/file.pdf"),
+            ("mail_cloud", "https://datacloudmail.ru/file"),
+            ("mail_cloud", "https://cdn.cloud.mail.ru/file"),
+        ] {
+            assert!(
+                validate_download_url(provider, input).is_ok(),
+                "rejected allowed destination {input} for {provider}"
+            );
+        }
 
         for (provider, input) in [
             ("yandex_disk", "http://storage.yandex.net/file"),
             ("yandex_disk", "https://storage.yandex.net:444/file"),
             ("yandex_disk", "https://evil.example/file"),
             ("yandex_disk", "https://user@storage.yandex.net/file"),
+            ("mail_cloud", "http://datacloudmail.ru/file"),
+            ("mail_cloud", "https://datacloudmail.ru:444/file"),
             ("mail_cloud", "https://datacloudmail.ru.evil.example/file"),
+            ("mail_cloud", "https://user:password@datacloudmail.ru/file"),
             ("unknown", "https://storage.yandex.net/file"),
         ] {
             assert!(
                 validate_download_url(provider, input).is_err(),
-                "accepted {input}"
+                "accepted {input} for {provider}"
             );
         }
     }

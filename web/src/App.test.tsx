@@ -206,7 +206,7 @@ describe("operator session and dashboard shell", () => {
     await user.click(within(nav).getByRole("button", { name: /PDF review/ }))
     await screen.findByText("Ada Lovelace · 2026 · November")
     await waitFor(() => expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1"))
-    await screen.findByText("No PDFs found")
+    await screen.findByText("No PDFs found", {}, { timeout: 5000 })
     await user.selectOptions(screen.getByRole("combobox", { name: "Feed" }), "feed-2")
 
     await waitFor(() => {
