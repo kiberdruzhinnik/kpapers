@@ -17,7 +17,7 @@ for (const scenario of cases) {
       await page.route("**/api/management/**", async (route) => {
         const path = new URL(route.request().url()).pathname
         const body = path.endsWith("/session") ? { status: "authenticated" }
-          : path.endsWith("/feeds") ? [{ id: "timezone-feed", display_name: "Timezone author", description: "", active: true, refresh_interval_seconds: null }]
+          : path.endsWith("/feeds") ? [{ id: "timezone-feed", display_name: "Timezone author", description: "", active: true, refresh_interval_seconds: null, extraction_engine: null }]
           : path.endsWith("/years") ? [{ feed_id: "timezone-feed", year: 2026, active: true }]
           : path.endsWith("/months") ? [month] : null
         await route.fulfill({ status: 200, json: body })

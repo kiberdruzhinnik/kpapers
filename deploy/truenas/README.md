@@ -23,6 +23,10 @@ This stack pulls the public API and web images from GitHub Container Registry. K
 
 3. Set `API_URL` to the API's internal origin as reachable from the web container. The default Compose service name is `api`, so the example uses `http://api:8080`; if you rename that service, use its Compose service name here. Set `PUBLIC_BASE_URL` to the URL operators use to reach the service. Keep `COOKIE_SECURE=true` when HTTPS is configured at a reverse proxy. Set `WEB_PORT` to the desired TrueNAS host port.
 
+## Extraction engine
+
+This published-image stack runs Pdfium only. It does not include the optional Marker worker image or the `marker` network, so leave `PDF_EXTRACTION_ENGINE` at its default `pdfium` and do not select Marker for a feed. To evaluate or deploy Marker, use the repository Compose stack described in [Deployment with Docker Compose](../../docs/deployment.md) and [Marker extraction](../../docs/marker-evaluation.md), which build and run the private worker. Switching a feed to Marker in this stack would make its refreshes fail because no worker endpoint is available; existing cached content would remain, but no new content would be extracted.
+
 ## Start and update
 
 Validate the configuration and start the stack:

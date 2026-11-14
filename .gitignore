@@ -9,3 +9,5 @@ backups/
 .tmp/
 .codex-attachments
 fuzz/target
+__pycache__/
+*.pyc

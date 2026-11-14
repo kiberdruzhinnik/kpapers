@@ -34,7 +34,7 @@ pub async fn render(Path(feed_id): Path<String>, State(pool): State<SqlitePool>)
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-    let items = match sqlx::query_as::<_, Item>("SELECT sd.id, sd.filename, sd.publication_date, sd.provider_modified_at, sd.discovered_at, cc.sanitized_html FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN cached_content cc ON cc.document_id=sd.id WHERE fm.feed_id=? AND fm.active=1 AND fy.active=1 AND sd.extraction_status='success' AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish' ORDER BY COALESCE(sd.publication_date, sd.provider_modified_at, sd.discovered_at) DESC")
+    let items = match sqlx::query_as::<_, Item>("SELECT sd.id, sd.filename, sd.publication_date, sd.provider_modified_at, sd.discovered_at, cc.sanitized_html FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN cached_content cc ON cc.document_id=sd.id WHERE fm.feed_id=? AND fm.active=1 AND fy.active=1 AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish' ORDER BY COALESCE(sd.publication_date, sd.provider_modified_at, sd.discovered_at) DESC")
         .bind(&feed.id).fetch_all(&pool).await {
             Ok(items) => items,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -86,7 +86,7 @@ pub async fn review_download(
 async fn document_redirect(pool: SqlitePool, document_id: String, public_only: bool) -> Response {
     let row = if public_only {
         sqlx::query_as::<_, (String, String, String)>(
-            "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE sd.id=? AND f.active=1 AND fy.active=1 AND fm.active=1 AND sd.extraction_status='success' AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish'",
+            "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id JOIN cached_content cc ON cc.document_id=sd.id WHERE sd.id=? AND f.active=1 AND fy.active=1 AND fm.active=1 AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish'",
         ).bind(&document_id).fetch_optional(&pool).await
     } else {
         sqlx::query_as::<_, (String, String, String)>(
