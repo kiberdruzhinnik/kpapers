@@ -14,6 +14,19 @@ describe("management API request", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/management/overview", expect.objectContaining({ credentials: "same-origin" }))
   })
 
+  it("loads active and archived global review queues", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response("[]", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(api.reviewQueue(false)).resolves.toEqual([])
+    await expect(api.reviewQueue(true)).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/management/review-queue?archived=false", expect.objectContaining({ credentials: "same-origin" }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/management/review-queue?archived=true", expect.objectContaining({ credentials: "same-origin" }))
+  })
+
   it("sends same-origin credentials and JSON payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":"feed-1"}', {
       status: 201,

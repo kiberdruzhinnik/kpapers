@@ -99,6 +99,10 @@ fn app(
         )
         .route("/api/management/overview", get(feed_api::overview_summary))
         .route(
+            "/api/management/review-queue",
+            get(feed_api::list_review_queue),
+        )
+        .route(
             "/api/management/feeds",
             get(feed_api::list).post(feed_api::create),
         )
@@ -283,6 +287,17 @@ mod tests {
         let response = app
             .clone()
             .oneshot(
+                Request::get("/api/management/review-queue")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app
+            .clone()
+            .oneshot(
                 Request::post("/api/login")
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from("{broken"))
@@ -349,6 +364,19 @@ mod tests {
                 "needs_review_count": 0,
             })
         );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/management/review-queue")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_body(response).await, serde_json::json!([]));
 
         let response = app
             .clone()

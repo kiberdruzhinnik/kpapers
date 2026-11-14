@@ -14,6 +14,18 @@ const feeds = [
 ]
 const selectedMonth = { id: "month-1", feed_id: "feed-1", year: 2026, month: 11, provider: "fixture", source_url: "fixture://current-month/", active: true, last_attempt_at: null, next_refresh_at: null, last_result: null, last_error: null }
 const secondDocument = { ...document, id: "doc-2", filename: "compiler-notes.pdf" }
+const queuedDocument = {
+  ...document,
+  id: "queued-doc",
+  filename: "queued-paper.pdf",
+  extraction_status: "failure",
+  feed_id: "feed-2",
+  feed_name: "Grace Hopper",
+  year: 2025,
+  month: 12,
+  month_id: "month-2",
+  archived: false,
+}
 
 function response(body: unknown, status = 200) {
   return new Response(body === null ? null : JSON.stringify(body), {
@@ -22,8 +34,9 @@ function response(body: unknown, status = 200) {
   })
 }
 
-function installDocumentsApi(failSave = false) {
+function installDocumentsApi(failSave = false, queueDocuments: unknown[] = [queuedDocument]) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/management/review-queue?archived=false" || String(input) === "/api/management/review-queue?archived=true") return response(queueDocuments)
     if (String(input) === "/api/management/feeds/feed-1/years") return response([{ feed_id: "feed-1", year: 2026, active: true }])
     if (String(input) === "/api/management/feeds/feed-2/years") return response([{ feed_id: "feed-2", year: 2025, active: true }])
     if (String(input) === "/api/management/feeds/feed-1/years/2026/months") return response([selectedMonth])
@@ -39,8 +52,8 @@ function installDocumentsApi(failSave = false) {
   return fetchMock
 }
 
-function renderReview(initialSelection: { feedId: string; year: number; monthId: string } | null = { feedId: "feed-1", year: 2026, monthId: "month-1" }) {
-  return render(<><Toaster /><PdfReview feeds={feeds} initialSelection={initialSelection} onBack={vi.fn()} /></>)
+function renderReview(initialSelection: { feedId: string; year: number; monthId: string } | null = { feedId: "feed-1", year: 2026, monthId: "month-1" }, initialQueueMode: "needs-review" | "archived" | null = null) {
+  return render(<><Toaster /><PdfReview feeds={feeds} initialSelection={initialSelection} initialQueueMode={initialQueueMode} onBack={vi.fn()} onQueueModeChange={vi.fn()} /></>)
 }
 
 describe("PDF review", () => {
@@ -116,5 +129,28 @@ describe("classification and extraction presentation", () => {
     await user.click(screen.getByRole("button", { name: "Retry extraction" }))
     await screen.findByText("Extraction success")
     expect(screen.queryByText(/Successful extraction is required/)).not.toBeInTheDocument()
+  })
+
+  it("loads the global active queue with source context and saves a publication decision", async () => {
+    const fetchMock = installDocumentsApi()
+    const user = userEvent.setup()
+    renderReview(null, "needs-review")
+
+    expect(await screen.findByRole("heading", { name: "Documents needing attention" })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: "queued-paper.pdf" })).toBeInTheDocument()
+    expect(screen.getByText("Grace Hopper · 2025 · December")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "View source PDF" })).toHaveAttribute("href", "/api/management/documents/queued-doc/source")
+    const decision = screen.getByRole("combobox", { name: "Publication decision for queued-paper.pdf" })
+    await user.selectOptions(decision, "include")
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/management/documents/queued-doc/promotion", expect.objectContaining({ method: "PUT", body: JSON.stringify({ override_value: "include" }) })))
+  })
+
+  it("shows a clear state for an empty archived queue", async () => {
+    installDocumentsApi(false, [])
+    renderReview(null, "archived")
+
+    expect(await screen.findByRole("heading", { name: "Archived documents needing attention" })).toBeInTheDocument()
+    expect(await screen.findByText("No documents need attention")).toBeInTheDocument()
+    expect(screen.getByText("This review queue is empty.")).toBeInTheDocument()
   })
 })
