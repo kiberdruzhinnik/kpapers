@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 16;
+const EXTRACTION_PIPELINE_REVISION: u32 = 17;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -72,13 +72,21 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
     let mut previous_top = None;
     for line in lines {
         let mut runs = Vec::new();
+        let mut previous_word: Option<(&str, f32)> = None;
         for word in &line.words {
             let text = word.text.trim();
             if text.is_empty() {
                 continue;
             }
             let mut run_text = String::new();
-            if !runs.is_empty() {
+            if let Some((previous_text, previous_right)) = previous_word
+                && should_insert_word_space(
+                    previous_text,
+                    text,
+                    word.bbox.x - previous_right,
+                    word.avg_font_size,
+                )
+            {
                 run_text.push(' ');
             }
             run_text.push_str(text);
@@ -87,6 +95,7 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
                 bold: word.is_bold,
                 italic: word.is_italic,
             });
+            previous_word = Some((text, word.bbox.x + word.bbox.width));
         }
         if runs.is_empty() {
             continue;
@@ -109,6 +118,23 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
         });
     }
     styled
+}
+
+fn should_insert_word_space(previous: &str, next: &str, gap: f32, font_size: f32) -> bool {
+    let Some(first_next) = next.chars().next() else {
+        return false;
+    };
+    if matches!(
+        first_next,
+        ',' | '.' | ';' | ':' | '!' | '?' | '»' | '”' | '’' | ')' | ']' | '}'
+    ) || previous.ends_with(['-', '‐', '‑'])
+        || previous.ends_with(['«', '“', '‘', '(', '[', '{'])
+        || matches!(first_next, '-' | '‐' | '‑')
+    {
+        return false;
+    }
+
+    gap > font_size.max(1.0) * 0.18
 }
 
 fn finalize_pages(
@@ -994,8 +1020,10 @@ mod tests {
         is_skladchik_purchase_promotion, is_xml_10_char, large_gap_continues_sentence,
         lines_to_html, normalize_text, pages_to_text, push_styled_char, strip_page_label_lines,
         strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
-        text_to_safe_html,
+        text_lines_to_styled_lines, text_to_safe_html,
     };
+    use pdf_oxide::geometry::Rect;
+    use pdf_oxide::layout::{TextChar, TextLine, Word};
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
@@ -1320,6 +1348,13 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn malformed_tounicode_cmap_does_not_panic() {
+        let bytes = include_bytes!("../fuzz/corpus/pdf_bytes/cmap-invalid-utf8.pdf");
+
+        assert!(extract_pdf(bytes, 2 * 1024 * 1024).is_err());
+    }
+
     fn simple_pdf_pages(texts: &[&str]) -> Vec<u8> {
         let font_id = 3 + 2 * texts.len();
         let mut objects = vec![
@@ -1537,13 +1572,181 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v16:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v17:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v16:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v15:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v14:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v13:pdfium:{source}"));
         assert_ne!(processed, format!("pdf-text-v13:marker:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
+    }
+
+    fn line_from_words(words: &[(&str, f32, bool)]) -> StyledLine {
+        let mut positioned_words = Vec::new();
+        let mut left = 0.0;
+        for (text, gap_before, italic) in words {
+            left += *gap_before;
+            let mut chars = Vec::new();
+            for (index, ch) in text.chars().enumerate() {
+                let mut text_char = TextChar::simple(
+                    ch,
+                    Rect::new(left + index as f32 * 6.0, 20.0, 6.0, 12.0),
+                    "Fixture".into(),
+                    12.0,
+                );
+                text_char.is_italic = *italic;
+                chars.push(text_char);
+            }
+            let word = Word::from_chars(chars);
+            left += word.bbox.width;
+            positioned_words.push(word);
+        }
+        text_lines_to_styled_lines(vec![TextLine::new(positioned_words)])
+            .into_iter()
+            .next()
+            .expect("fixture has words")
+    }
+
+    #[test]
+    fn reconstructs_reported_russian_spacing_and_preserves_italic_quote() {
+        let first = line_from_words(&[
+            ("У", 4.0, false),
+            ("современной", 4.0, false),
+            ("поп", 4.0, false),
+            ("-", 0.0, false),
+            ("психологии", 0.0, false),
+            ("на", 4.0, false),
+            ("эту", 4.0, false),
+            ("тему", 4.0, false),
+            ("имеется", 4.0, false),
+            ("сколько", 4.0, false),
+            ("угодно", 4.0, false),
+            ("воркования", 4.0, false),
+            ("вида", 4.0, false),
+            ("«надо", 4.0, false),
+            ("понять", 4.0, false),
+            ("и", 4.0, false),
+            ("учесть»,", 4.0, false),
+            ("«инерция", 4.0, false),
+            ("восприятия»,", 4.0, false),
+            ("«привычка", 4.0, false),
+            ("к", 4.0, false),
+            ("прежнему", 4.0, false),
+            ("распределению", 4.0, false),
+            ("ролей", 4.0, false),
+            ("спаситель", 4.0, true),
+            ("—", 4.0, true),
+            ("заколдованная", 4.0, true),
+            ("жертва", 4.0, true),
+            ("»", 0.0, true),
+            ("и", 4.0, false),
+            ("всё", 4.0, false),
+            ("такое.", 4.0, false),
+        ]);
+        let text = first.text();
+        assert_eq!(
+            text,
+            "У современной поп-психологии на эту тему имеется сколько угодно воркования вида «надо понять и учесть», «инерция восприятия», «привычка к прежнему распределению ролей спаситель — заколдованная жертва» и всё такое."
+        );
+        let html = lines_to_html(&[vec![first]]);
+        assert_eq!(
+            html,
+            "<p>У современной поп-психологии на эту тему имеется сколько угодно воркования вида «надо понять и учесть», «инерция восприятия», «привычка к прежнему распределению ролей<em> спаситель — заколдованная жертва»</em> и всё такое.</p>"
+        );
+
+        let second = line_from_words(&[
+            ("Звучит", 4.0, false),
+            ("абсолютно", 4.0, false),
+            ("по", 4.0, false),
+            ("-", 0.0, false),
+            ("идиотски,", 0.0, false),
+            ("бессмысленно,", 4.0, false),
+            ("беспощадно,", 4.0, false),
+            ("ужасно", 4.0, false),
+            ("и", 4.0, false),
+            ("отвратительно.", 4.0, false),
+            ("Но", 4.0, false),
+            ("именно", 4.0, false),
+            ("этим", 4.0, false),
+            ("занимались", 4.0, false),
+            ("примитивные", 4.0, false),
+            ("племена", 4.0, false),
+            ("Австралии", 4.0, false),
+            ("до", 4.0, false),
+            ("самого", 4.0, false),
+            ("прихода", 4.0, false),
+            ("европейцев", 4.0, false),
+            ("(и,", 4.0, false),
+            ("возможно,", 4.0, false),
+            ("мы", 4.0, false),
+            ("не", 4.0, false),
+            ("погрешим", 4.0, false),
+            ("против", 4.0, false),
+            ("истины,", 4.0, false),
+            ("предположив,", 4.0, false),
+            ("что", 4.0, false),
+            ("не", 4.0, false),
+            ("в", 4.0, false),
+            ("последнюю", 4.0, false),
+            ("очередь", 4.0, false),
+            ("благодаря", 4.0, false),
+            ("этому", 4.0, false),
+            ("идиотизму", 4.0, false),
+            ("европейцы", 4.0, false),
+            ("застали", 4.0, false),
+            ("аборигенов", 4.0, false),
+            ("в", 4.0, false),
+            ("худшем,", 4.0, false),
+            ("кажется,", 4.0, false),
+            ("культурно", 4.0, false),
+            ("-", 0.0, false),
+            ("техническом", 0.0, false),
+            ("состоянии,", 4.0, false),
+            ("чем", 4.0, false),
+            ("кого", 4.0, false),
+            ("бы", 4.0, false),
+            ("то", 4.0, false),
+            ("ни", 4.0, false),
+            ("было", 4.0, false),
+            ("из", 4.0, false),
+            ("встретившихся", 4.0, false),
+            ("им", 4.0, false),
+            ("дикарей).", 4.0, false),
+        ]);
+        assert_eq!(
+            second.text(),
+            "Звучит абсолютно по-идиотски, бессмысленно, беспощадно, ужасно и отвратительно. Но именно этим занимались примитивные племена Австралии до самого прихода европейцев (и, возможно, мы не погрешим против истины, предположив, что не в последнюю очередь благодаря этому идиотизму европейцы застали аборигенов в худшем, кажется, культурно-техническом состоянии, чем кого бы то ни было из встретившихся им дикарей)."
+        );
+        assert_eq!(
+            lines_to_html(&[vec![second]]),
+            "<p>Звучит абсолютно по-идиотски, бессмысленно, беспощадно, ужасно и отвратительно. Но именно этим занимались примитивные племена Австралии до самого прихода европейцев (и, возможно, мы не погрешим против истины, предположив, что не в последнюю очередь благодаря этому идиотизму европейцы застали аборигенов в худшем, кажется, культурно-техническом состоянии, чем кого бы то ни было из встретившихся им дикарей).</p>"
+        );
+    }
+
+    #[test]
+    fn word_separator_uses_layout_for_spaces_and_text_for_punctuation() {
+        assert_eq!(
+            line_from_words(&[("два", 0.0, false), ("слова", 3.0, false)]).text(),
+            "два слова"
+        );
+        assert_eq!(
+            line_from_words(&[("слово", 8.0, false), (",", 0.0, false), ("»", 0.0, false)]).text(),
+            "слово,»"
+        );
+        assert_eq!(
+            line_from_words(&[
+                ("по", 8.0, false),
+                ("-", 8.0, false),
+                ("идиотски", 0.0, false)
+            ])
+            .text(),
+            "по-идиотски"
+        );
+        assert_eq!(
+            line_from_words(&[("«", 8.0, false), ("слово", 0.0, false)]).text(),
+            "«слово"
+        );
     }
 
     #[test]

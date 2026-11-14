@@ -23,5 +23,8 @@ tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread"] }
 sqlx = { version = "0.8", features = ["macros", "migrate", "runtime-tokio-rustls", "sqlite"] }
 pdf_oxide = "0.3.78"
 
+[patch.crates-io]
+pdf_oxide = { path = "vendor/pdf_oxide" }
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
