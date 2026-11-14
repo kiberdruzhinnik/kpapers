@@ -15,6 +15,9 @@ from html.parser import HTMLParser
 APP = os.environ["APP_BASE_URL"].rstrip("/")
 RSS = os.environ["RSS_BASE_URL"].rstrip("/")
 MINIFLUX = os.environ["MINIFLUX_BASE_URL"].rstrip("/")
+CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}encoded"
+ARTICLE_ALPHA_TITLE = "Древние индейцы делятся зелёными технологиями"
+ARTICLE_ALPHA_LEAD = "Сегодня для нас нет ничего актуальней добра."
 
 
 class SafeMarkup(HTMLParser):
@@ -141,6 +144,12 @@ def main():
     assert item_url_by_title == expected_links, f"RSS links must be stable per-document redirects: {item_url_by_title}"
     alpha_item = next(item for item in items if item.findtext("title") == "article-alpha")
     alpha_html = alpha_item.findtext("description") or ""
+    alpha_encoded = alpha_item.findtext(CONTENT_NS) or ""
+    assert alpha_encoded == alpha_html, "description and encoded content must publish the same article HTML"
+    assert alpha_html.startswith(f"<h1>{ARTICLE_ALPHA_TITLE}</h1>"), alpha_html[:800]
+    assert f"<p>{ARTICLE_ALPHA_LEAD}</p>" in alpha_html, alpha_html[:1200]
+    assert "<p>Fixture article alpha wraps across two lines." in alpha_html, alpha_html[:1200]
+    assert "<p>это не инвестиционные рекомендации</p>" in alpha_html, alpha_html[:1200]
     beta_item = next(item for item in items if item.findtext("title") == beta_title)
     beta_html = beta_item.findtext("description") or ""
     if reference_pdf_test:
@@ -177,6 +186,7 @@ def main():
             assert urllib.parse.unquote(response.headers["Location"]) == f"https://fixture.invalid/current-month/{filename}", response.headers["Location"]
     for item in items:
         SafeMarkup().feed(item.findtext("description") or "")
+        SafeMarkup().feed(item.findtext(CONTENT_NS) or "")
 
     basic = "Basic " + __import__("base64").b64encode(
         f"{os.environ['MINIFLUX_USERNAME']}:{os.environ['MINIFLUX_PASSWORD']}".encode()
@@ -208,6 +218,10 @@ def main():
             assert response.code in (301, 302, 303, 307, 308), response.code
             assert urllib.parse.unquote(response.headers["Location"]) == f"https://fixture.invalid/current-month/{filename}", response.headers["Location"]
     alpha = next(entry for entry in entries if entry["title"] == "article-alpha")
+    assert alpha["content"].startswith(f"<h1>{ARTICLE_ALPHA_TITLE}</h1>"), alpha["content"][:800]
+    assert f"<p>{ARTICLE_ALPHA_LEAD}</p>" in alpha["content"], alpha["content"][:1200]
+    assert "<p>Fixture article alpha wraps across two lines." in alpha["content"], alpha["content"][:1200]
+    assert "<p>это не инвестиционные рекомендации</p>" in alpha["content"], alpha["content"][:1200]
     assert "Fixture article alpha" in alpha["content"]
     assert alpha["url"] == expected_links["article-alpha"]
 
@@ -227,6 +241,10 @@ def main():
     assert len(refreshed_items) == 2
     refreshed_alpha_item = next(item for item in refreshed_items if item.findtext("title") == "article-alpha")
     refreshed_alpha_html = refreshed_alpha_item.findtext("description") or ""
+    refreshed_alpha_encoded = refreshed_alpha_item.findtext(CONTENT_NS) or ""
+    assert refreshed_alpha_encoded == refreshed_alpha_html, "refreshed description and encoded content diverged"
+    assert refreshed_alpha_html.startswith(f"<h1>{ARTICLE_ALPHA_TITLE}</h1>"), refreshed_alpha_html[:800]
+    assert f"<p>{ARTICLE_ALPHA_LEAD}</p>" in refreshed_alpha_html, refreshed_alpha_html[:1200]
     assert "<h2><strong>Обновлённый Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов</strong></h2>" in refreshed_alpha_html, refreshed_alpha_html
     assert "Обновлённый Дмитриев у Трампов" in refreshed_alpha_html
     assert "Fixture article alpha wraps" in refreshed_alpha_html
@@ -241,6 +259,8 @@ def main():
     ids_after = {entry["title"]: entry["id"] for entry in updated_entries}
     assert ids_after == ids_before, "Miniflux changed entry identity after content refresh"
     updated_alpha = next(entry for entry in updated_entries if entry["title"] == "article-alpha")
+    assert updated_alpha["content"].startswith(f"<h1>{ARTICLE_ALPHA_TITLE}</h1>"), updated_alpha["content"][:800]
+    assert f"<p>{ARTICLE_ALPHA_LEAD}</p>" in updated_alpha["content"], updated_alpha["content"][:1200]
     assert "Обновлённый Дмитриев у Трампов, трудности у танкеров, мегаполисы США у социалистов" in updated_alpha["content"]
     print("Miniflux E2E passed: subscription, safe RSS items, promotional exclusion, stable GUIDs, no duplicates, refreshed content.")
 

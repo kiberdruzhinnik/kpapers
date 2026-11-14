@@ -919,6 +919,25 @@ mod tests {
             "Pdfium output must not be reused as a pdf_oxide cache match"
         );
 
+        let previous_revision_key = format!("pdf-text-v15:pdf_oxide:{fingerprint}");
+        sqlx::query("UPDATE cached_content SET content_fingerprint=? WHERE document_id='doc'")
+            .bind(&previous_revision_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(extract(false).await.err(), Some(StatusCode::BAD_GATEWAY));
+        let (text, cache_key): (String, String) = sqlx::query_as(
+            "SELECT extracted_text, content_fingerprint FROM cached_content WHERE document_id='doc'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(text, "Last successful content");
+        assert_eq!(
+            cache_key, previous_revision_key,
+            "An older extraction revision must not be reused as a current cache match"
+        );
+
         let pdf_oxide_key = crate::pdf_processing::cache_fingerprint(&fingerprint);
         sqlx::query("UPDATE cached_content SET content_fingerprint=? WHERE document_id='doc'")
             .bind(&pdf_oxide_key)

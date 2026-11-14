@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 15;
+const EXTRACTION_PIPELINE_REVISION: u32 = 16;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -585,6 +585,12 @@ fn is_heading_candidate(line: &StyledLine, body_size: f32) -> bool {
     emphasized_heading || prominent_and_isolated
 }
 
+/// The first content line of a document has no preceding gap, so an opening
+/// title is identified from its larger type and position instead of spacing.
+fn is_opening_title_candidate(line: &StyledLine, body_size: f32, index: usize) -> bool {
+    index == 0 && line.text().chars().count() <= 160 && line.size >= body_size * 1.35
+}
+
 fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: f32) -> bool {
     let previous_text = previous.text();
     let next_text = next.text();
@@ -823,7 +829,10 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     let heading_candidates = all_lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| is_heading_candidate(line, body_size))
+        .filter(|(index, line)| {
+            is_heading_candidate(line, body_size)
+                || is_opening_title_candidate(line, body_size, *index)
+        })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let title_index = heading_candidates.first().copied();
@@ -1358,6 +1367,67 @@ mod tests {
         output
     }
 
+    fn styled_pdf_page(lines: &[(&str, f32, f32)]) -> Vec<u8> {
+        let mut stream = String::from("BT\n");
+        for (text, size, y) in lines {
+            let encoded = text
+                .bytes()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            stream.push_str(&format!("1 0 0 1 50 {y} Tm /F1 {size} Tf <{encoded}> Tj\n"));
+        }
+        stream.push_str("ET");
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len() + 1
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        let mut output = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(output.len());
+            output.extend(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+        }
+        let xref = output.len();
+        output.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        for offset in offsets {
+            output.extend(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        output.extend(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        output
+    }
+
+    #[test]
+    fn pdf_opening_title_and_lead_stay_separate_blocks_without_bold_title() {
+        let extracted = super::extract_pdf(
+            &styled_pdf_page(&[
+                ("Ancient tribes share green", 22.5, 760.0),
+                ("technologies", 22.5, 733.0),
+                ("Today nothing matters more than kindness.", 15.0, 697.0),
+                ("First body paragraph wraps", 15.0, 620.0),
+                ("across two lines.", 15.0, 600.5),
+                ("Second body paragraph follows.", 15.0, 540.0),
+            ]),
+            1024 * 1024,
+        )
+        .unwrap();
+        assert_eq!(
+            extracted.html,
+            "<h1>Ancient tribes share green technologies</h1>\n<p>Today nothing matters more than kindness.</p>\n<p>First body paragraph wraps across two lines.</p>\n<p>Second body paragraph follows.</p>"
+        );
+    }
+
     #[test]
     fn pdf_oxide_default_text_extraction_preserves_page_text_and_safe_html() {
         let extracted = super::extract_pdf(
@@ -1467,7 +1537,8 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v15:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v16:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v15:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v14:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v13:pdfium:{source}"));
         assert_ne!(processed, format!("pdf-text-v13:marker:{source}"));
