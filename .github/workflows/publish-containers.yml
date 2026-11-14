@@ -19,12 +19,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: api
+          - image: kpapers-api
             context: .
             file: Dockerfile.api
-          - image: web
+          - image: kpapers-web
             context: ./web
             file: ./web/Dockerfile
+          - image: kpapers-marker
+            context: ./marker_worker
+            file: ./marker_worker/Dockerfile
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -36,7 +39,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/kpapers-${{ matrix.image }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
@@ -50,7 +53,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: |
-            kpapers-${{ matrix.image }}:ci
+            ${{ matrix.image }}:ci
             ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
@@ -61,7 +64,7 @@ jobs:
         with:
           version: v0.76.2
           scan-type: image
-          image-ref: kpapers-${{ matrix.image }}:ci
+          image-ref: ${{ matrix.image }}:ci
           scanners: vuln,secret
           format: json
           output: trivy-image-${{ matrix.image }}.json

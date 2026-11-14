@@ -22,30 +22,42 @@ The web container SHALL require a valid `API_URL` environment variable identifyi
 - **THEN** startup reports a clear configuration error and Nginx does not start
 
 ### Requirement: Publish application container images
-The project SHALL publish publicly pullable API and web container images to GitHub Container Registry from the repository's GitHub Actions workflow.
+The project SHALL publish publicly pullable API, web, and Marker worker container images to GitHub Container Registry from the repository's GitHub Actions workflow.
 
 #### Scenario: Build from the default branch
 - **WHEN** a commit is pushed to the default branch
-- **THEN** the workflow builds and publishes both API and web images with a stable default-branch tag and a commit-specific tag
+- **THEN** the workflow builds and publishes all three images with a stable default-branch tag and a commit-specific tag
 
 #### Scenario: Build from a version tag
 - **WHEN** a version tag is pushed
-- **THEN** the workflow publishes both images with that version tag
+- **THEN** the workflow publishes all three images with that version tag
 
 #### Scenario: Pull published images without authentication
 - **WHEN** a deployment host pulls a published image from GHCR
 - **THEN** the image is publicly accessible without registry credentials
 
 ### Requirement: Provide a TrueNAS Compose deployment example
-The project SHALL provide a Compose example that deploys the API and web images from GHCR and loads operator configuration from a colocated `.env` file.
+The project SHALL provide a Compose example that deploys the API, web, and Marker worker images from GHCR and loads operator configuration from a colocated `.env` file. The web service SHALL join the stack's default network and an externally managed `npm` network. The deployment SHALL configure the Marker worker as the global default extraction engine and allow Pdfium to be selected instead.
 
 #### Scenario: Start the deployment
 - **WHEN** an operator supplies the required values in `.env` and starts the Compose project
-- **THEN** Compose pulls the published API and web images, starts the web service after the API is healthy, and makes the configured web port available
+- **THEN** Compose pulls the published API, web, and Marker images, starts the web service after the API is healthy, and connects the web service to the `npm` network
 
 #### Scenario: Preserve application data
 - **WHEN** the Compose project is stopped, recreated, or its images are updated
-- **THEN** the API database remains stored in a persistent named volume mounted at `/data`
+- **THEN** the API database remains stored under `./kpapers_data` mounted at `/data` and the Marker model cache remains in a persistent named volume
+
+#### Scenario: Connect web traffic through Nginx Proxy Manager
+- **WHEN** the web service starts
+- **THEN** it joins both the Compose default network and the externally managed `npm` network so Nginx Proxy Manager can reach it by service name
+
+#### Scenario: Run Marker as the default extraction engine
+- **WHEN** an operator starts the TrueNAS deployment with its default configuration
+- **THEN** the API sends Marker extraction requests to the private Marker worker and stores its model cache persistently
+
+#### Scenario: Select Pdfium as the global default
+- **WHEN** an operator sets `PDF_EXTRACTION_ENGINE=pdfium` in `.env`
+- **THEN** the API uses Pdfium as the global default while retaining the Marker worker for feeds configured to use Marker
 
 #### Scenario: Write data using the TrueNAS app identity
 - **WHEN** the API image runs with a TrueNAS dataset or volume configured for the conventional `app` UID:GID `568:568`

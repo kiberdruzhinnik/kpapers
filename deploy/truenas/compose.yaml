@@ -1,14 +1,17 @@
 services:
-  api:
+  kpapers-api:
     image: ghcr.io/kiberdruzhinnik/kpapers-api:${IMAGE_TAG:-latest}
     env_file:
       - .env
     environment:
       DATABASE_URL: sqlite:///data/kpapers.sqlite?mode=rwc
+      PDF_EXTRACTION_ENGINE: ${PDF_EXTRACTION_ENGINE:-marker}
+      MARKER_WORKER_URL: http://kpapers-marker:8000
+      MARKER_WORKER_TIMEOUT_SECONDS: ${MARKER_WORKER_TIMEOUT_SECONDS:-120}
+      MARKER_WORKER_MAX_RESPONSE_BYTES: ${MARKER_WORKER_MAX_RESPONSE_BYTES:-8388608}
+      MARKER_WORKER_MAX_CONCURRENCY: ${MARKER_WORKER_MAX_CONCURRENCY:-1}
     volumes:
-      - kpapers_data:/data
-    networks:
-      - app
+      - ./kpapers_data:/data
     healthcheck:
       test: ["CMD", "/usr/local/bin/kpapers-api", "--healthcheck"]
       interval: 30s
@@ -17,17 +20,38 @@ services:
       retries: 3
     restart: unless-stopped
 
-  web:
-    image: ghcr.io/kiberdruzhinnik/kpapers-web:${IMAGE_TAG:-latest}
+  kpapers-marker:
+    image: ghcr.io/kiberdruzhinnik/kpapers-marker:${IMAGE_TAG:-latest}
     environment:
-      API_URL: ${API_URL:?Set API_URL in .env to the internal API origin, for example http://api:8080}
+      MARKER_MODE: ${MARKER_MODE:-fast}
+      MARKER_WORKER_MAX_INPUT_BYTES: ${MARKER_WORKER_MAX_INPUT_BYTES:-26214400}
+      MARKER_WORKER_MAX_RESPONSE_BYTES: ${MARKER_WORKER_MAX_RESPONSE_BYTES:-8388608}
+      MARKER_WORKER_MAX_CONCURRENCY: ${MARKER_WORKER_MAX_CONCURRENCY:-1}
+      MARKER_WORKER_EXECUTION_TIMEOUT_SECONDS: ${MARKER_WORKER_EXECUTION_TIMEOUT_SECONDS:-110}
+    volumes:
+      - ./marker_models:/models
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)
+      interval: 30s
+      timeout: 10s
+      start_period: 900s
+      retries: 3
+    restart: unless-stopped
+
+  kpapers-web:
+    image: ghcr.io/kiberdruzhinnik/kpapers-web:${IMAGE_TAG:-latest}
     depends_on:
-      api:
+      kpapers-api:
         condition: service_healthy
-    ports:
-      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8080}:80"
+    environment:
+      API_URL: http://kpapers-api:8080
     networks:
-      - app
+      - default
+      - npm
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
       interval: 30s
@@ -35,10 +59,6 @@ services:
       retries: 3
     restart: unless-stopped
 
-volumes:
-  kpapers_data:
-    name: kpapers_truenas_data
-
 networks:
-  app:
-    driver: bridge
+  npm:
+    external: true
