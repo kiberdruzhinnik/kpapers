@@ -4,6 +4,16 @@
 
 Open `/manage/` in the web application and sign in with the configured operator username and password. From Overview or Feeds, select **Create feed** to open `/manage/feeds/new`, enter the author's display name and optional description, and create it. Creation opens `/manage/feeds/{feed-id}` so you can configure sources; Cancel returns to `/manage/feeds`. The feed detail view shows the permanent public RSS path `/feeds/{feed-id}`. Editing the name or description keeps this UUID-based URL. Use **Sign out** when finished.
 
+## Choose the PDF extraction engine
+
+The create and edit feed forms include **PDF extraction engine**:
+
+- **Inherit global default** follows the deployment setting. This is the default for existing feeds.
+- **Pdfium** always uses the built-in extractor and needs no extra service.
+- **Marker** uses the optional private worker and can recover text from scanned PDFs.
+
+The feed detail view shows the saved selection. If Marker is selected but the worker is unavailable, extraction fails visibly and the previous successful cached content remains; the app does not switch to Pdfium automatically. Start the worker and retry, or select Pdfium and refresh. Changing the engine causes the next refresh to reprocess affected PDFs even when the source file is unchanged.
+
 ## Archive, restore, or permanently delete
 
 Open a feed’s **More actions** menu or a year’s actions menu to archive that scope. Month actions are under **Manage source**. Use **Archive** to temporarily hide a feed, year, or month from active management, scheduled refresh, and RSS publication. Archived content and identifiers are retained. Restore an archived feed from the **Archived** tab’s contextual menu; restore an archived year or month from its feed details. Restoring a child beneath an archived parent does not publish it until the parent is also restored.

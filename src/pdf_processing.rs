@@ -1,3 +1,5 @@
+use crate::extraction::{ExtractionEngine, MarkerSettings};
+use crate::marker_worker::{MarkerClient, MarkerResponse};
 use pdfium_render::prelude::{PdfFontWeight, Pdfium};
 use std::sync::OnceLock;
 
@@ -8,7 +10,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 12;
+const EXTRACTION_PIPELINE_REVISION: u32 = 13;
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -31,8 +33,18 @@ impl StyledLine {
     }
 }
 
+#[cfg(test)]
 pub fn cache_fingerprint(source_fingerprint: &str) -> String {
-    format!("pdf-text-v{EXTRACTION_PIPELINE_REVISION}:{source_fingerprint}")
+    cache_fingerprint_for(ExtractionEngine::Pdfium, source_fingerprint)
+}
+
+/// Cache identity includes both the effective engine and the processing
+/// revision. Changing either value makes the next refresh reprocess the PDF.
+pub fn cache_fingerprint_for(engine: ExtractionEngine, source_fingerprint: &str) -> String {
+    format!(
+        "pdf-text-v{EXTRACTION_PIPELINE_REVISION}:{}:{source_fingerprint}",
+        engine.as_str()
+    )
 }
 
 pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, String> {
@@ -136,6 +148,13 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
         pages.push(lines);
     }
 
+    finalize_pages(pages, page_count)
+}
+
+fn finalize_pages(
+    mut pages: Vec<Vec<StyledLine>>,
+    page_count: usize,
+) -> Result<ExtractedText, String> {
     if pages
         .last()
         .is_some_and(|lines| is_skladchik_boundary_ad(lines))
@@ -180,6 +199,83 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
         first_page,
         page_count,
     })
+}
+
+/// Convert the Marker worker contract into the shared publication pipeline.
+///
+/// Marker supplies plain text and emphasis runs only. Boundary advertisements,
+/// printed page labels, Sponsr chrome, paragraph joining, heading detection and
+/// HTML escaping are therefore applied by the same code used for Pdfium.
+pub fn extract_marker_response(response: &MarkerResponse) -> Result<ExtractedText, String> {
+    if response.page_count == 0 {
+        return Err("Marker worker returned no pages".into());
+    }
+    if response.pages.len() != response.page_count {
+        return Err("Marker worker page count does not match its page list".into());
+    }
+    let mut pages = Vec::with_capacity(response.pages.len());
+    for page in &response.pages {
+        let mut lines = Vec::with_capacity(page.lines.len());
+        for marker_line in &page.lines {
+            let mut runs = Vec::new();
+            for run in &marker_line.runs {
+                let text = clean_marker_text(&run.text);
+                if !text.is_empty() {
+                    runs.push(StyledRun {
+                        text,
+                        bold: run.bold,
+                        italic: run.italic,
+                    });
+                }
+            }
+            parse_markdown_bold(&mut runs);
+            trim_run_edges(&mut runs);
+            if runs.is_empty() {
+                continue;
+            }
+            lines.push(StyledLine {
+                runs,
+                size: marker_line.size.clamp(1.0, 200.0),
+                gap_before: marker_line.gap_before.max(0.0),
+                left: marker_line.left.max(0.0),
+            });
+        }
+        pages.push(lines);
+    }
+    finalize_pages(pages, response.page_count)
+}
+
+fn clean_marker_text(text: &str) -> String {
+    text.replace(['\0', '\u{fffd}'], "")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|ch| is_xml_10_char(*ch))
+        .collect()
+}
+
+/// Validate and extract with the selected engine. Marker failures are
+/// returned directly; they never invoke Pdfium as an implicit fallback.
+pub async fn extract_with_engine(
+    engine: ExtractionEngine,
+    bytes: &[u8],
+    maximum_bytes: usize,
+    marker: &MarkerSettings,
+) -> Result<ExtractedText, String> {
+    if bytes.len() > maximum_bytes {
+        return Err("PDF exceeds configured size limit".into());
+    }
+    if !bytes.starts_with(b"%PDF-") {
+        return Err("source is not a PDF file".into());
+    }
+    match engine {
+        ExtractionEngine::Pdfium => extract_pdf(bytes, maximum_bytes),
+        ExtractionEngine::Marker => {
+            let client = MarkerClient::from_settings(marker)?;
+            let response = client.extract(bytes, maximum_bytes).await?;
+            extract_marker_response(&response)
+        }
+    }
 }
 
 pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut ExtractedText) {
@@ -1051,12 +1147,14 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
-        is_skladchik_purchase_promotion, is_xml_10_char, large_gap_continues_sentence,
-        lines_to_html, normalize_text, pages_to_text, push_styled_char, strip_page_label_lines,
-        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
-        text_to_safe_html,
+        StyledLine, StyledRun, cache_fingerprint, cache_fingerprint_for, extract_marker_response,
+        extract_pdf, is_skladchik_promotion, is_skladchik_purchase_promotion, is_xml_10_char,
+        large_gap_continues_sentence, lines_to_html, normalize_text, pages_to_text,
+        push_styled_char, strip_page_label_lines, strip_page_labels_by_content_position,
+        strip_sponsr_branding, strip_sponsr_preamble, text_to_safe_html,
     };
+    use crate::extraction::ExtractionEngine;
+    use crate::marker_worker::{MarkerLine, MarkerPage, MarkerResponse, MarkerRun};
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
@@ -1417,15 +1515,319 @@ mod tests {
     }
 
     #[test]
-    fn cache_fingerprint_invalidates_old_entries_and_is_stable() {
+    fn cache_fingerprint_includes_engine_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert!(processed.starts_with("pdf-text-v12:"));
-        assert_ne!(processed, format!("pdf-text-v11:{source}"));
-        assert_ne!(processed, format!("pdf-text-v10:{source}"));
-        assert_ne!(processed, format!("pdf-text-v9:{source}"));
+        assert_eq!(
+            processed,
+            cache_fingerprint_for(ExtractionEngine::Pdfium, source)
+        );
+        assert!(processed.starts_with("pdf-text-v13:pdfium:"));
+        assert_ne!(
+            processed,
+            cache_fingerprint_for(ExtractionEngine::Marker, source)
+        );
+        assert_ne!(processed, format!("pdf-text-v12:pdfium:{source}"));
+        assert_ne!(processed, format!("pdf-text-v13:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
+    }
+
+    fn marker_line(text: &str, size: f32, gap_before: f32) -> MarkerLine {
+        MarkerLine {
+            runs: vec![MarkerRun {
+                text: text.into(),
+                bold: false,
+                italic: false,
+            }],
+            size,
+            gap_before,
+            left: 50.0,
+        }
+    }
+
+    #[test]
+    fn marker_output_uses_the_shared_boundary_cleanup_and_safe_html() {
+        let response = MarkerResponse {
+            page_count: 3,
+            pages: vec![
+                MarkerPage {
+                    lines: vec![marker_line("КУПЛЕНО НА\nskladchik.ORG", 12.0, 0.0)],
+                },
+                MarkerPage {
+                    lines: vec![
+                        marker_line("1", 12.0, 0.0),
+                        marker_line("Native text title", 24.0, 32.0),
+                        marker_line(
+                            "Body with <script>alert('x')</script> and <b>markup</b>.",
+                            12.0,
+                            32.0,
+                        ),
+                    ],
+                },
+                MarkerPage {
+                    lines: vec![marker_line(AD, 12.0, 0.0)],
+                },
+            ],
+        };
+
+        let extracted = extract_marker_response(&response).unwrap();
+
+        assert_eq!(extracted.page_count, 3);
+        assert!(extracted.full_text.contains("Native text title"));
+        assert!(!extracted.full_text.contains("skladchik.ORG"));
+        assert!(!extracted.html.contains("<script"));
+        assert!(!extracted.html.contains("<b>"));
+        assert!(extracted.html.contains(
+            "Body with &lt;script&gt;alert('x')&lt;/script&gt; and &lt;b&gt;markup&lt;/b&gt;."
+        ));
+    }
+
+    #[test]
+    fn marker_output_preserves_emphasis_and_sponsr_chrome_cleanup() {
+        let mut title = marker_line("[Философское] «Старые деньги» — FAQ:", 24.0, 0.0);
+        title.runs[0].bold = true;
+        let mut disclaimer = marker_line("это не инвестиционные рекомендации", 12.0, 32.0);
+        disclaimer.runs[0].bold = true;
+        let response = MarkerResponse {
+            page_count: 1,
+            pages: vec![MarkerPage {
+                lines: vec![
+                    marker_line("1", 12.0, 0.0),
+                    marker_line("sponsr", 24.0, 0.0),
+                    marker_line("CrimsonAlter – Analytics", 9.0, 0.0),
+                    marker_line("27 февр 11:44", 9.0, 0.0),
+                    marker_line("58 минут", 9.0, 0.0),
+                    title,
+                    disclaimer,
+                    marker_line("Сразу к делу, коллеги.", 12.0, 32.0),
+                ],
+            }],
+        };
+
+        let extracted = extract_marker_response(&response).unwrap();
+
+        assert!(extracted.html.starts_with("<h1><strong>[Философское]"));
+        assert!(
+            extracted
+                .html
+                .contains("<p><strong>это не инвестиционные рекомендации</strong></p>")
+        );
+        assert!(extracted.html.contains("<p>Сразу к делу, коллеги.</p>"));
+        for chrome in ["sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"] {
+            assert!(
+                !extracted.html.contains(chrome),
+                "{chrome}: {}",
+                extracted.html
+            );
+        }
+    }
+
+    #[test]
+    fn marker_output_parses_literal_markdown_bold() {
+        let response = MarkerResponse {
+            page_count: 1,
+            pages: vec![MarkerPage {
+                lines: vec![
+                    marker_line("**это не инвестиционные рекомендации**", 12.0, 0.0),
+                    marker_line("Body text.", 12.0, 32.0),
+                ],
+            }],
+        };
+        let extracted = extract_marker_response(&response).unwrap();
+        assert!(
+            extracted
+                .html
+                .contains("<p><strong>это не инвестиционные рекомендации</strong></p>"),
+            "{}",
+            extracted.html
+        );
+    }
+
+    #[test]
+    fn marker_sponsr_output_uses_filename_title_recovery() {
+        let response = MarkerResponse {
+            page_count: 1,
+            pages: vec![MarkerPage {
+                lines: vec![
+                    marker_line("sponsr", 20.0, 0.0),
+                    marker_line("CrimsonAlter – Analytics", 12.0, 30.0),
+                    marker_line("27 февр 11:44", 12.0, 30.0),
+                    marker_line("58 минут", 12.0, 30.0),
+                    marker_line("Сразу к делу, коллеги.", 12.0, 30.0),
+                ],
+            }],
+        };
+        let mut extracted = extract_marker_response(&response).unwrap();
+        super::repair_sponsr_title_from_filename(
+            "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды.pdf",
+            &mut extracted,
+        );
+        assert!(
+            extracted
+                .html
+                .starts_with("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>"),
+            "{}",
+            extracted.html
+        );
+        for chrome in ["sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"] {
+            assert!(
+                !extracted.html.contains(chrome),
+                "{chrome}: {}",
+                extracted.html
+            );
+        }
+        assert!(extracted.html.contains("Сразу к делу, коллеги."));
+    }
+
+    #[test]
+    fn marker_real_native_fixture_applies_boundary_cleanup_and_safe_html() {
+        let response: MarkerResponse =
+            serde_json::from_str(include_str!("../tests/fixtures/marker/native-article.json"))
+                .unwrap();
+        let extracted = extract_marker_response(&response).unwrap();
+        assert!(
+            extracted
+                .html
+                .contains("Fixture article alpha wraps across two lines."),
+            "{}",
+            extracted.html
+        );
+        assert!(
+            extracted
+                .html
+                .contains("<strong>Bold </strong><em>italic<strong> both</strong></em> styles.")
+        );
+        assert!(extracted.html.contains("<strong>красный</strong>"));
+        for chrome in ["КУПЛЕНО", "skladchik", "<script", "<img", "onclick"] {
+            assert!(
+                !extracted.html.contains(chrome),
+                "{chrome}: {}",
+                extracted.html
+            );
+        }
+    }
+
+    #[test]
+    fn marker_real_scanned_fixture_preserves_ocr_text() {
+        let response: MarkerResponse = serde_json::from_str(include_str!(
+            "../tests/fixtures/marker/scanned-article.json"
+        ))
+        .unwrap();
+        let extracted = extract_marker_response(&response).unwrap();
+        assert!(
+            extracted
+                .html
+                .starts_with("<h1><strong>Scanned article title</strong></h1>")
+        );
+        assert!(
+            extracted
+                .html
+                .contains("Marker should recover this content with OCR.")
+        );
+        assert!(extracted.first_page.contains("Scanned article title"));
+    }
+
+    #[test]
+    fn marker_real_mixed_native_and_scanned_fixture_retains_both() {
+        let response: MarkerResponse = serde_json::from_str(include_str!(
+            "../tests/fixtures/marker/mixed-scan-article.json"
+        ))
+        .unwrap();
+        let extracted = extract_marker_response(&response).unwrap();
+        for retained in [
+            "Native header for mixed page",
+            "This native paragraph is in the text layer.",
+            "Scanned text in a small region must still trigger OCR.",
+            "Following native text stays outside the image.",
+        ] {
+            assert!(
+                extracted.html.contains(retained),
+                "{retained}: {}",
+                extracted.html
+            );
+        }
+        assert!(
+            extracted
+                .first_page
+                .contains("Native header for mixed page")
+        );
+        for unsafe_markup in ["<script", "<img", "onclick"] {
+            assert!(!extracted.html.contains(unsafe_markup));
+        }
+    }
+
+    #[test]
+    fn marker_real_sponsr_fixture_uses_filename_title_recovery() {
+        let response: MarkerResponse =
+            serde_json::from_str(include_str!("../tests/fixtures/marker/sponsr-article.json"))
+                .unwrap();
+        let mut extracted = extract_marker_response(&response).unwrap();
+        super::repair_sponsr_title_from_filename(
+            "[Философское] «Старые деньги» — FAQ_ как правильно считать дивиденды.pdf",
+            &mut extracted,
+        );
+        assert!(extracted.html.starts_with(
+            "<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды</strong></h1>"
+        ));
+        assert!(extracted.html.contains("Сразу к делу, коллеги."));
+        let notice = "<blockquote><p>Традиционные технические <strong>предуведомления:</strong></p>\n<p>Для новых читателей: <em>начинайте с этого текста.</em></p>\n<p>Продолжение <em><strong>технического предуведомления.</strong></em></p></blockquote>";
+        assert!(
+            extracted.html.contains(notice),
+            "notice paragraphs must stay in one quote: {}",
+            extracted.html
+        );
+        let quote_end = extracted.html.find("</blockquote>").unwrap();
+        let following = "На данном проекте периодически упоминается термин «старые деньги».";
+        assert!(
+            extracted.html.find(following).unwrap() > quote_end,
+            "following body text must stay outside the notice quote: {}",
+            extracted.html
+        );
+        for chrome in ["sponsr", "CrimsonAlter", "27 февр 11:44", "58 минут"] {
+            assert!(
+                !extracted.html.contains(chrome),
+                "{chrome}: {}",
+                extracted.html
+            );
+        }
+    }
+
+    #[test]
+    fn marker_real_promotion_fixture_drives_classification() {
+        let response: MarkerResponse =
+            serde_json::from_str(include_str!("../tests/fixtures/marker/promotion.json")).unwrap();
+        let extracted = extract_marker_response(&response).unwrap();
+        assert_eq!(
+            super::classify_promotion("club-promotion.pdf", &extracted.first_page),
+            "promotional"
+        );
+    }
+
+    #[test]
+    fn marker_output_rejects_inconsistent_page_counts() {
+        let response = MarkerResponse {
+            page_count: 2,
+            pages: vec![MarkerPage { lines: vec![] }],
+        };
+        assert!(extract_marker_response(&response).is_err());
+    }
+
+    #[tokio::test]
+    async fn marker_failure_is_reported_without_invoking_pdfium() {
+        let settings = crate::extraction::MarkerSettings {
+            endpoint: Some("http://127.0.0.1:1".into()),
+            timeout: std::time::Duration::from_millis(200),
+            max_response_bytes: 1024,
+            permits: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        };
+        let error =
+            super::extract_with_engine(ExtractionEngine::Marker, b"%PDF-1.4", 1024, &settings)
+                .await
+                .err()
+                .expect("Marker failure must be returned as an error");
+        assert!(error.contains("Marker worker"), "{error}");
+        assert!(!error.to_lowercase().contains("pdfium"), "{error}");
     }
 
     #[test]
@@ -1505,6 +1907,40 @@ mod tests {
         assert!(
             html.ends_with("<p>Обычный текст после предуведомления.</p>"),
             "{html}"
+        );
+    }
+
+    #[test]
+    fn marker_notice_paragraphs_stay_grouped_and_following_body_stays_outside() {
+        let mut notice = marker_line("Традиционные технические предуведомления:", 12.0, 30.0);
+        notice.left = 70.0;
+        let mut continuation =
+            marker_line("Для новых читателей: начинайте с этого текста.", 12.0, 30.0);
+        continuation.left = 70.0;
+        let mut ending = marker_line("Продолжение технического предуведомления.", 12.0, 30.0);
+        ending.left = 70.0;
+        let following = "На данном проекте периодически упоминается термин «старые деньги».";
+        let response = MarkerResponse {
+            page_count: 1,
+            pages: vec![MarkerPage {
+                lines: vec![
+                    marker_line("Сразу к делу, коллеги.", 12.0, 0.0),
+                    notice,
+                    continuation,
+                    ending,
+                    marker_line(following, 12.0, 30.0),
+                ],
+            }],
+        };
+        let extracted = extract_marker_response(&response).unwrap();
+        let expected = "<blockquote><p>Традиционные технические предуведомления:</p>\n<p>Для новых читателей: начинайте с этого текста.</p>\n<p>Продолжение технического предуведомления.</p></blockquote>";
+        assert!(extracted.html.contains(expected), "{}", extracted.html);
+        let quote_end = extracted.html.find("</blockquote>").unwrap();
+        let following_index = extracted.html.find(following).unwrap();
+        assert!(
+            following_index > quote_end,
+            "following body text must stay outside the notice quote: {}",
+            extracted.html
         );
     }
 

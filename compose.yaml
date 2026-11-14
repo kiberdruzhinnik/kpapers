@@ -12,15 +12,50 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       CURRENT_MONTH_REFRESH_SECONDS: ${CURRENT_MONTH_REFRESH_SECONDS:-3600}
       OLDER_MONTH_REFRESH_SECONDS: ${OLDER_MONTH_REFRESH_SECONDS:-86400}
+      PDF_EXTRACTION_ENGINE: ${PDF_EXTRACTION_ENGINE:-pdfium}
+      MARKER_WORKER_URL: ${MARKER_WORKER_URL:-}
+      MARKER_WORKER_TIMEOUT_SECONDS: ${MARKER_WORKER_TIMEOUT_SECONDS:-120}
+      MARKER_WORKER_MAX_RESPONSE_BYTES: ${MARKER_WORKER_MAX_RESPONSE_BYTES:-8388608}
+      MARKER_WORKER_MAX_CONCURRENCY: ${MARKER_WORKER_MAX_CONCURRENCY:-1}
     volumes:
       - kpapers_data:/data
     networks:
       - app
+      - marker
     healthcheck:
       test: ["CMD", "/usr/local/bin/kpapers-api", "--healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Optional Marker worker. Start it with:
+  #   docker compose --profile marker up -d marker
+  # It has no published port and is reachable only by the API on the private
+  # marker network. Pdfium-only deployments leave the profile disabled.
+  marker:
+    profiles: ["marker"]
+    build:
+      context: ./marker_worker
+      dockerfile: Dockerfile
+    environment:
+      MARKER_MODE: ${MARKER_MODE:-fast}
+      MARKER_WORKER_MAX_INPUT_BYTES: ${MARKER_WORKER_MAX_INPUT_BYTES:-26214400}
+      MARKER_WORKER_MAX_RESPONSE_BYTES: ${MARKER_WORKER_MAX_RESPONSE_BYTES:-8388608}
+      MARKER_WORKER_MAX_CONCURRENCY: ${MARKER_WORKER_MAX_CONCURRENCY:-1}
+      MARKER_WORKER_EXECUTION_TIMEOUT_SECONDS: ${MARKER_WORKER_EXECUTION_TIMEOUT_SECONDS:-110}
+    volumes:
+      - marker_models:/models
+    networks:
+      - marker
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 900s
       retries: 3
     restart: unless-stopped
 
@@ -46,7 +81,10 @@ services:
 
 volumes:
   kpapers_data:
+  marker_models:
 
 networks:
   app:
+    driver: bridge
+  marker:
     driver: bridge

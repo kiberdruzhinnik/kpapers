@@ -4,7 +4,16 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT=kpapers-e2e
 ENV_FILE="$ROOT/.env.e2e"
+ENGINE="${E2E_EXTRACTION_ENGINE:-pdfium}"
+case "$ENGINE" in
+  pdfium) ;;
+  marker) ;;
+  *) printf 'e2e: E2E_EXTRACTION_ENGINE must be pdfium or marker, got %s\n' "$ENGINE" >&2; exit 2 ;;
+esac
 compose_files=(-f "$ROOT/compose.yaml" -f "$ROOT/compose.e2e.yaml")
+if [[ "$ENGINE" == marker ]]; then
+  compose_files+=(-f "$ROOT/compose.marker-e2e.yaml")
+fi
 
 die() { printf 'e2e: %s\n' "$*" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || die 'Python 3 is required to generate deterministic PDF fixtures.'
@@ -26,9 +35,16 @@ mkdir -p "$ROOT/.tmp"
 fixture_dir="$(mktemp -d "$ROOT/.tmp/kpapers-e2e-fixtures.XXXXXX")"
 printf 'OPERATOR_PASSWORD_HASH=helper\nSESSION_SIGNING_KEY=%s\nAPI_URL=http://api:8080\nCOOKIE_SECURE=false\nWEB_PORT=18082\nWEB_BIND_ADDRESS=127.0.0.1\nPUBLIC_BASE_URL=http://web\nE2E_OPERATOR_PASSWORD=%s\nE2E_FIXTURE_HOST_DIR=%s\n' \
   "$(python3 -c 'import secrets; print(secrets.token_hex(32))')" "$operator_password" "$fixture_dir" > "$ENV_FILE"
+if [[ "$ENGINE" == marker ]]; then
+  printf 'PDF_EXTRACTION_ENGINE=pdfium\nMARKER_WORKER_URL=http://marker:8000\nMARKER_MODE=fast\nE2E_EXTRACTION_ENGINE=marker\nE2E_TEST_SCRIPT=/tests/e2e/test_marker_engine.py\n' >> "$ENV_FILE"
+fi
 chmod 600 "$ENV_FILE"
 
-compose() { "${DOCKER[@]}" compose "${compose_files[@]}" --env-file "$ENV_FILE" -p "$PROJECT" "$@"; }
+compose() {
+  local profiles=()
+  [[ "$ENGINE" == marker ]] && profiles=(--profile marker)
+  "${DOCKER[@]}" compose "${profiles[@]}" "${compose_files[@]}" --env-file "$ENV_FILE" -p "$PROJECT" "$@"
+}
 cleanup() {
   result=$?
   if [[ "${E2E_KEEP_IMAGES:-false}" == true && $result -eq 0 ]]; then
@@ -54,7 +70,11 @@ chmod -R a+rX "$fixture_dir"
 if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
   "${DOCKER[@]}" image inspect kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || die 'Shared E2E images are missing; run the integration orchestrator without E2E_SKIP_APP_BUILD.'
 else
-  compose build api web
+  if [[ "$ENGINE" == marker ]]; then
+    compose build api web marker
+  else
+    compose build api web
+  fi
 fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'

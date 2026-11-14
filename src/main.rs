@@ -74,10 +74,11 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://kpapers.db?mode=rwc".to_owned());
     let pool = db::connect_and_migrate(&database_url).await?;
-    tokio::spawn(scheduler::run(pool.clone()));
+    let settings = extraction::ExtractionSettings::from_env()?;
+    tokio::spawn(scheduler::run(pool.clone(), settings.clone()));
     let auth = auth::AuthConfig::from_env()?;
 
-    let app = app(pool, auth);
+    let app = app(pool, auth, settings);
     let address = SocketAddr::from(([0, 0, 0, 0], 8080));
     let listener = tokio::net::TcpListener::bind(address).await?;
 
@@ -86,7 +87,11 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
+fn app(
+    pool: sqlx::SqlitePool,
+    auth: auth::AuthConfig,
+    settings: extraction::ExtractionSettings,
+) -> Router {
     let management = Router::new()
         .route(
             "/api/management/session",
@@ -190,6 +195,7 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
         .route("/documents/{document_id}/download", get(rss::download))
         .merge(management)
         .layer(Extension(auth))
+        .layer(Extension(settings))
         .layer(middleware::from_fn(logging::request_log))
         .with_state(pool)
 }
@@ -211,8 +217,10 @@ struct HealthResponse {
 
 mod auth;
 mod db;
+mod extraction;
 mod feed_api;
 mod logging;
+mod marker_worker;
 mod pdf_processing;
 mod providers;
 mod rss;
@@ -240,6 +248,7 @@ mod tests {
         let app = app(
             pool.clone(),
             auth::test_auth_config("operator", "correct horse"),
+            extraction::ExtractionSettings::default(),
         );
 
         let response = app
@@ -427,6 +436,7 @@ mod tests {
         let app = app(
             pool.clone(),
             auth::test_auth_config("operator", "correct horse"),
+            extraction::ExtractionSettings::default(),
         );
 
         let ((), logs) = test_support::capture_logs(async {

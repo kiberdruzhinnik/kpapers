@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-const feed = { id: "design-feed", display_name: "Operator research notes with a long author name", description: "Source folders and publication decisions", active: true, refresh_interval_seconds: null }
+const feed = { id: "design-feed", display_name: "Operator research notes with a long author name", description: "Source folders and publication decisions", active: true, refresh_interval_seconds: null, extraction_engine: null }
 const month = { id: "design-month", feed_id: feed.id, year: 2026, month: 11, provider: "fixture", source_url: `https://disk.yandex.ru/${"long-source-path/".repeat(8)}`, active: true, last_attempt_at: null, next_refresh_at: null, last_result: null, last_error: null }
 
 for (const viewport of [{ width: 320, height: 740 }, { width: 375, height: 812 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }, { width: 812, height: 375 }]) {

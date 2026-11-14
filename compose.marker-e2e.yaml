@@ -1,0 +1,12 @@
+services:
+  e2e:
+    depends_on:
+      marker:
+        condition: service_healthy
+    environment:
+      MARKER_WORKER_URL: http://marker:8000
+    volumes:
+      - ./tests/fixtures/marker:/marker-fixtures:ro
+    networks:
+      - app
+      - marker
