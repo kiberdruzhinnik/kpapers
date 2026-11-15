@@ -66,11 +66,17 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page.getByText("2026 refresh queued")).toBeVisible()
   await page.getByRole("button", { name: "Refresh now" }).click()
   await expect(page.getByText("November refresh queued")).toBeVisible()
+  const discoveryResponse = page.waitForResponse((response) => response.url().endsWith(`/months/${createdMonth.id}/discover`) && response.request().method() === "POST")
   await page.getByRole("button", { name: "Fetch and parse" }).click()
+  const discovery = await (await discoveryResponse).json() as { discovered_pdfs: number }
+  expect(discovery.discovered_pdfs).toBeGreaterThan(0)
   await expect(page.getByText("Folder scan complete")).toBeVisible({ timeout: 30_000 })
 
+  const documentsResponse = page.waitForResponse((response) => response.url().endsWith(`/months/${createdMonth.id}/documents`) && response.request().method() === "GET")
   await page.getByRole("button", { name: "Review PDFs" }).click()
   await expect(page).toHaveURL(new RegExp(`/manage/pdf-review/${createdFeed.id}/2026/${createdMonth.id}$`))
+  const initialDocuments = await (await documentsResponse).json() as { filename: string }[]
+  expect(initialDocuments.some((document) => document.filename === "article-alpha.pdf")).toBe(true)
   await page.reload()
   await expect(page.getByRole("combobox", { name: "Feed" })).toHaveValue(createdFeed.id)
   await expect(page.getByRole("combobox", { name: "Year" })).toHaveValue("2026")
@@ -100,6 +106,7 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page).toHaveURL(new RegExp(`/manage/pdf-review/${createdFeed.id}/2026/${createdMonth.id}$`))
   const documents = await (await reloadedDocuments).json() as { filename: string; promotional_override: string | null }[]
   expect(documents.find((document) => document.filename === "article-alpha.pdf")?.promotional_override).toBe("exclude")
+  await page.reload()
   await expect(page.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })).toHaveValue("exclude")
   await saveDecision("include")
   await expect(page.getByText("Publication decision saved").first()).toBeVisible()
