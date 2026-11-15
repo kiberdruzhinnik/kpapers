@@ -9,7 +9,10 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 17;
+const EXTRACTION_PIPELINE_REVISION: u32 = 19;
+const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
+const INVESTMENT_DISCLAIMER_END: &str =
+    "данный документ не является личной инвестиционной рекомендацией";
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -153,6 +156,7 @@ fn finalize_pages(
     {
         pages.remove(0);
     }
+    strip_trailing_sponsr_navigation(&mut pages);
     // Printed page numbering normally starts at 1 on the first content page, so
     // labels must be compared after leading advertisement pages are removed.
     strip_page_labels_by_content_position(&mut pages);
@@ -401,6 +405,34 @@ fn is_skladchik_boundary_ad(lines: &[StyledLine]) -> bool {
     is_skladchik_promotion(&text) || is_skladchik_purchase_promotion(&text)
 }
 
+fn strip_trailing_sponsr_navigation(pages: &mut Vec<Vec<StyledLine>>) {
+    let first_page_to_check = pages.len().saturating_sub(TRAILING_DISCLAIMER_SEARCH_PAGES);
+    let mut tokens = Vec::new();
+    for (page_index, page) in pages.iter().enumerate().skip(first_page_to_check) {
+        for (line_index, line) in page.iter().enumerate() {
+            for token in normalized_promotion_text(&line.text()).split_whitespace() {
+                tokens.push((token.to_owned(), page_index, line_index));
+            }
+        }
+    }
+
+    let marker_tokens = INVESTMENT_DISCLAIMER_END
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    let marker_start = tokens.windows(marker_tokens.len()).rposition(|window| {
+        window
+            .iter()
+            .map(|(token, _, _)| token.as_str())
+            .eq(marker_tokens.iter().copied())
+    });
+    let Some(marker_start) = marker_start else {
+        return;
+    };
+    let (_, page_index, line_index) = tokens[marker_start + marker_tokens.len() - 1];
+    pages[page_index].truncate(line_index + 1);
+    pages.truncate(page_index + 1);
+}
+
 #[cfg(test)]
 fn is_xml_10_char(ch: char) -> bool {
     matches!(ch, '\u{9}' | '\u{a}' | '\u{d}')
@@ -555,9 +587,34 @@ fn push_line_separator(target: &mut Vec<StyledRun>, next_runs: &[StyledRun]) {
     if previous_has_space || next_has_space {
         return;
     }
+    if hyphenated_line_continuation(
+        &target
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>(),
+        &next_runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>(),
+    ) {
+        return;
+    }
     let bold = next.is_some_and(|next| previous.bold && next.bold);
     let italic = next.is_some_and(|next| previous.italic && next.italic);
     push_styled_char(target, ' ', bold, italic);
+}
+
+fn hyphenated_line_continuation(previous: &str, next: &str) -> bool {
+    previous
+        .trim_end()
+        .chars()
+        .next_back()
+        .is_some_and(|ch| matches!(ch, '-' | '‐' | '‑'))
+        && next
+            .trim_start()
+            .chars()
+            .next()
+            .is_some_and(char::is_lowercase)
 }
 
 fn body_text_size(pages: &[Vec<StyledLine>]) -> f32 {
@@ -703,7 +760,9 @@ fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
             } else {
                 "\n\n"
             };
-            text.push_str(separator);
+            if !hyphenated_line_continuation(&previous.text(), &first.text()) {
+                text.push_str(separator);
+            }
         }
         if !text.is_empty() && previous_page_last.is_none() {
             text.push_str("\n\n");
@@ -711,7 +770,9 @@ fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
         for (index, line) in lines.iter().enumerate() {
             if index > 0 {
                 let previous = lines[index - 1];
-                let separator = if large_gap_starts_paragraph(previous, line) {
+                let separator = if hyphenated_line_continuation(&previous.text(), &line.text()) {
+                    ""
+                } else if large_gap_starts_paragraph(previous, line) {
                     "\n\n"
                 } else {
                     "\n"
@@ -948,8 +1009,12 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
                 }
                 blocks.push((tag.to_owned(), line.runs.clone(), in_quote));
             } else {
+                let hyphenated_continuation = previous_line.is_some_and(|previous| {
+                    hyphenated_line_continuation(&previous.text(), &line.text())
+                });
                 let paragraph_break = previous_line
-                    .is_some_and(|previous| large_gap_starts_paragraph(previous, line));
+                    .is_some_and(|previous| large_gap_starts_paragraph(previous, line))
+                    && !hyphenated_continuation;
                 if (paragraph_break || (!paragraph.is_empty() && paragraph_quote != in_quote))
                     && !paragraph.is_empty()
                 {
@@ -1016,11 +1081,12 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        StyledLine, StyledRun, cache_fingerprint, extract_pdf, is_skladchik_promotion,
-        is_skladchik_purchase_promotion, is_xml_10_char, large_gap_continues_sentence,
-        lines_to_html, normalize_text, pages_to_text, push_styled_char, strip_page_label_lines,
-        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
-        text_lines_to_styled_lines, text_to_safe_html,
+        StyledLine, StyledRun, cache_fingerprint, extract_pdf, finalize_pages,
+        is_skladchik_promotion, is_skladchik_purchase_promotion, is_xml_10_char,
+        large_gap_continues_sentence, lines_to_html, normalize_text, pages_to_text,
+        push_styled_char, strip_page_label_lines, strip_page_labels_by_content_position,
+        strip_sponsr_branding, strip_sponsr_preamble, text_lines_to_styled_lines,
+        text_to_safe_html,
     };
     use pdf_oxide::geometry::Rect;
     use pdf_oxide::layout::{TextChar, TextLine, Word};
@@ -1051,6 +1117,97 @@ mod tests {
         assert!(!is_skladchik_purchase_promotion(
             "КУПЛЕНО НА another.example"
         ));
+    }
+
+    #[test]
+    fn removes_trailing_series_navigation_after_the_complete_disclaimer() {
+        for (series, teaser) in [
+            (
+                "Кофе с банкиром",
+                "[Новостной деск] Апдейты по бумагам Русского списка",
+            ),
+            (
+                "Пропуск на новостной деск",
+                "[Заметки] Испарение капитализации Google",
+            ),
+        ] {
+            let pages = vec![
+                vec![
+                    line("Article closing paragraph remains.", 12.0),
+                    line(
+                        "Данная информация не является инвестиционной рекомендацией.",
+                        12.0,
+                    ),
+                    line(
+                        "Данный документ не является инвестиционной рекомендацией",
+                        12.0,
+                    ),
+                    line("Данный документ не является личной", 12.0),
+                    line("инвестиционной рекомендацией", 12.0),
+                ],
+                vec![line(series, 20.0), line(teaser, 14.0)],
+                vec![
+                    line("Продолжение карточки", 14.0),
+                    line("05 нояб 15:53", 10.0),
+                ],
+            ];
+
+            let extracted = finalize_pages(pages, 3).expect("article text should remain");
+            assert!(
+                extracted
+                    .full_text
+                    .contains("Article closing paragraph remains.")
+            );
+            assert!(
+                extracted
+                    .full_text
+                    .contains("Данная информация не является")
+            );
+            assert!(
+                extracted
+                    .full_text
+                    .contains("Данный документ не является инвестиционной рекомендацией")
+            );
+            assert!(
+                extracted
+                    .full_text
+                    .contains("Данный документ не является личной инвестиционной рекомендацией")
+            );
+            assert!(!extracted.full_text.contains(series));
+            assert!(!extracted.full_text.contains(teaser));
+            assert!(!extracted.full_text.contains("Продолжение карточки"));
+            assert!(!extracted.full_text.contains("05 нояб 15:53"));
+            assert!(
+                extracted
+                    .html
+                    .contains("Article closing paragraph remains.")
+            );
+            assert!(extracted.html.contains("Данная информация не является"));
+            assert!(
+                extracted
+                    .html
+                    .contains("Данный документ не является личной инвестиционной рекомендацией")
+            );
+            assert!(!extracted.html.contains(series));
+            assert!(!extracted.html.contains(teaser));
+            assert!(!extracted.html.contains("Продолжение карточки"));
+            assert!(!extracted.html.contains("05 нояб 15:53"));
+        }
+    }
+
+    #[test]
+    fn preserves_trailing_text_when_the_disclaimer_end_marker_is_absent() {
+        let extracted = finalize_pages(
+            vec![vec![
+                line("Article body remains.", 12.0),
+                line("Related article navigation", 12.0),
+            ]],
+            1,
+        )
+        .expect("article text should remain");
+
+        assert!(extracted.full_text.contains("Article body remains."));
+        assert!(extracted.full_text.contains("Related article navigation"));
     }
 
     #[test]
@@ -1572,7 +1729,9 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v17:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v19:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v18:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v17:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v16:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v15:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v14:pdf_oxide:{source}"));
@@ -1804,6 +1963,64 @@ mod tests {
         assert!(
             html.ends_with("<p>Обычный текст после предуведомления.</p>"),
             "{html}"
+        );
+    }
+
+    #[test]
+    fn joins_hyphenated_words_split_across_lines_in_text_and_html() {
+        let pages = vec![vec![
+            line(
+                "В конце спича рассказчик предложил добавить ему и совместно, по-",
+                12.0,
+            ),
+            line("товарищески, приобрести и употребить беленькую.", 12.0),
+            line("То есть, как бы героя ни кидало по жизни, чем-", 12.0),
+            line(
+                "нибудь нужным он занимался неизменно — в любую погоду.",
+                12.0,
+            ),
+            line("Обычный перенос строки", 12.0),
+            line("должен сохранить пробел.", 12.0),
+        ]];
+        let expected = "В конце спича рассказчик предложил добавить ему и совместно, по-товарищески, приобрести и употребить беленькую. То есть, как бы героя ни кидало по жизни, чем-нибудь нужным он занимался неизменно — в любую погоду. Обычный перенос строки должен сохранить пробел.";
+
+        assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
+        assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn joins_the_reported_explanation_wrap_in_final_extracted_text_and_html() {
+        // Captured line split from the supplied PDF: page 138 ends the line after "объяснения-".
+        let extracted = finalize_pages(
+            vec![vec![
+                line("в качестве объяснения-", 12.0),
+                line("мастерключа её следующая формула:", 12.0),
+                line("Обычная строка продолжается", 12.0),
+                line("следующим словом.", 12.0),
+            ]],
+            1,
+        )
+        .unwrap();
+
+        assert!(
+            extracted
+                .full_text
+                .contains("объяснения-мастерключа её следующая формула:")
+        );
+        assert!(
+            extracted
+                .html
+                .contains("объяснения-мастерключа её следующая формула:")
+        );
+        assert!(
+            extracted
+                .full_text
+                .contains("Обычная строка продолжается следующим словом.")
+        );
+        assert!(
+            extracted
+                .html
+                .contains("Обычная строка продолжается следующим словом.")
         );
     }
 
