@@ -161,6 +161,17 @@ The system SHALL join line-wrapped text within a paragraph using spaces while pr
 - **WHEN** the PDF layout indicates that a large vertical gap separates complete prose paragraphs and no continuation evidence applies
 - **THEN** the paragraphs remain distinct in extracted text and published HTML
 
+### Requirement: Join parenthetical continuations across page boundaries
+The system SHALL keep a prose paragraph continuous across a PDF page boundary when the next page begins with a parenthetical continuation and the text and layout indicate that it continues the preceding paragraph.
+
+#### Scenario: Page continuation begins with a parenthetical phrase
+- **WHEN** a page ends mid-sentence and the next page begins with an opening parenthesis followed by lowercase prose, with compatible styling and alignment
+- **THEN** both pages' text is joined with whitespace in one paragraph in extracted text and published HTML
+
+#### Scenario: Parenthetical continuation follows a completed sentence
+- **WHEN** a page ends with a completed sentence and the next page begins a parenthetical phrase as a new paragraph
+- **THEN** the paragraphs remain distinct in extracted text and published HTML
+
 ### Requirement: Render PDF headings with semantic levels
 The system SHALL identify document titles and section headings from corroborating PDF typography and layout cues and render them using semantic heading tags from `<h1>` through `<h3>` according to their document hierarchy. The document title uses `<h1>`, top-level headings use `<h2>`, and nested headings use `<h3>`.
 
