@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 19;
+const EXTRACTION_PIPELINE_REVISION: u32 = 20;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
@@ -689,7 +689,15 @@ fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: 
     let Some(first_char) = next_text.trim_start().chars().next() else {
         return false;
     };
-    if !first_char.is_lowercase()
+    let continuation_char = if first_char == '(' {
+        next_text
+            .trim_start()
+            .strip_prefix('(')
+            .and_then(|text| text.trim_start().chars().next())
+    } else {
+        Some(first_char)
+    };
+    if !continuation_char.is_some_and(char::is_lowercase)
         || is_heading_candidate(previous, body_size)
         || is_heading_candidate(next, body_size)
     {
@@ -1729,7 +1737,8 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v19:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v20:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v19:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v18:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v17:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v16:pdf_oxide:{source}"));
@@ -2056,6 +2065,56 @@ mod tests {
         assert_eq!(
             lines_to_html(&pages),
             "<p>Первый абзац полностью завершен.</p>\n<p>Следующий абзац начинается здесь.</p>"
+        );
+    }
+
+    #[test]
+    fn joins_parenthetical_continuation_across_pages_but_keeps_completed_boundary() {
+        let continuation_pages = vec![
+            vec![line(
+                "Это по идее не служение, а самообслуживание — и на практике",
+                12.0,
+            )],
+            vec![line(
+                "(просто напоминаю статистику) данный лайфстайл приводит к росту тревог.",
+                12.0,
+            )],
+        ];
+        let expected = "Это по идее не служение, а самообслуживание — и на практике (просто напоминаю статистику) данный лайфстайл приводит к росту тревог.";
+        assert_eq!(
+            normalize_text(&pages_to_text(&continuation_pages)),
+            expected
+        );
+        assert_eq!(
+            lines_to_html(&continuation_pages),
+            format!("<p>{expected}</p>")
+        );
+
+        let completed_pages = vec![
+            vec![line("Первый абзац полностью завершен.", 12.0)],
+            vec![line("(Это отдельное пояснение.)", 12.0)],
+        ];
+        assert_eq!(
+            normalize_text(&pages_to_text(&completed_pages)),
+            "Первый абзац полностью завершен.\n\n(Это отдельное пояснение.)"
+        );
+        assert_eq!(
+            lines_to_html(&completed_pages),
+            "<p>Первый абзац полностью завершен.</p>\n<p>(Это отдельное пояснение.)</p>"
+        );
+    }
+
+    #[test]
+    fn joins_reported_parenthetical_page_continuation_in_text_and_html() {
+        let first_page = "Осознанность&Саморазвитие же суть россыпь полутерапевтических- полуколдуских (соотношение может сильно варьироваться) практик, чья финальная задача, она же высшая ценность, состоит в «чувствовать себя хорошо». Это по идее не служение, а самообслуживание — и на практике";
+        let second_page = "(просто напоминаю статистику) данный лайфстайл приводит не к снижению, а к росту тревог и случаев душевных расстройств.";
+        let pages = vec![vec![line(first_page, 12.0)], vec![line(second_page, 12.0)]];
+        let expected = format!("{first_page} {second_page}");
+
+        assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
+        assert_eq!(
+            lines_to_html(&pages),
+            format!("<p>{}</p>", expected.replace('&', "&amp;"))
         );
     }
 
