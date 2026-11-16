@@ -100,7 +100,7 @@ pub async fn validate_public_download_url(
     Ok(url)
 }
 
-fn validate_download_url_shape(
+pub fn validate_download_url_shape(
     url: &url::Url,
 ) -> Result<(String, u16), Box<dyn std::error::Error + Send + Sync>> {
     if url.scheme() != "https" {
