@@ -1335,6 +1335,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "hmac",
+ "ipnet",
  "libfuzzer-sys",
  "pdf_oxide",
  "percent-encoding",

@@ -39,8 +39,8 @@ libfuzzer_sys::fuzz_target!(|data: &[u8]| {
         }
         6 => {
             let _ = providers::validate_source_url(&text);
-            for provider in ["yandex_disk", "mail_cloud", "unknown"] {
-                let _ = providers::validate_download_url(provider, &text);
+            if let Ok(url) = url::Url::parse(&text) {
+                let _ = providers::validate_download_url_shape(&url);
             }
         }
         7 => {

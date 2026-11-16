@@ -127,7 +127,7 @@ async fn document_redirect(pool: SqlitePool, document_id: String, public_only: b
             _ => return StatusCode::BAD_GATEWAY.into_response(),
         }
     } else {
-        match crate::providers::validate_download_url(&row.0, &file.download_url) {
+        match crate::providers::validate_public_download_url(&file.download_url).await {
             Ok(url) => url,
             Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
         }
