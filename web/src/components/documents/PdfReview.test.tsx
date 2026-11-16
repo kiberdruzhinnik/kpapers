@@ -125,9 +125,11 @@ describe("classification and extraction presentation", () => {
     const user = userEvent.setup()
     renderReview()
     await screen.findByText("Extraction failure")
+    expect(screen.getByText("Extraction failed")).toBeInTheDocument()
     expect(screen.getByText(/Successful extraction is required/)).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Retry extraction" }))
     await screen.findByText("Extraction success")
+    expect(screen.queryByText("Extraction failed")).not.toBeInTheDocument()
     expect(screen.queryByText(/Successful extraction is required/)).not.toBeInTheDocument()
   })
 

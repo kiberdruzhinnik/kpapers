@@ -305,25 +305,26 @@ pub async fn extract_document(
         let files = if row.1.starts_with("fixture://") {
             crate::providers::local_fixtures::list_root_pdfs(&row.1).await
         } else { match row.0.as_str() {
-            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1).await.map_err(|e| e.to_string()),
-            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1).await.map_err(|e| e.to_string()),
+            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1).await.map_err(|e| format!("source listing failed: {}", safe_error_text(&e.to_string()))),
+            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1).await.map_err(|e| format!("source listing failed: {}", safe_error_text(&e.to_string()))),
             _ => return Err("unsupported provider".to_owned()),
         }}?;
-        let file = files.iter().find(|f| f.path == row.2).ok_or_else(|| "file is no longer present in the public folder".to_owned())?;
+        let file = files.iter().find(|f| f.path == row.2).ok_or_else(|| "source lookup failed: file is no longer present in the public folder".to_owned())?;
         let bytes = if row.1.starts_with("fixture://") {
             crate::providers::local_fixtures::download(file, maximum as u64).await
         } else { match row.0.as_str() {
-            "yandex_disk" => crate::providers::yandex_disk::download(file, maximum as u64).await.map_err(|e| e.to_string()),
-            "mail_cloud" => crate::providers::mail_cloud::download(file, maximum as u64).await.map_err(|e| e.to_string()),
+            "yandex_disk" => crate::providers::yandex_disk::download(file, maximum as u64).await.map_err(|e| format!("download failed: {}", safe_error_text(&e.to_string()))),
+            "mail_cloud" => crate::providers::mail_cloud::download(file, maximum as u64).await.map_err(|e| format!("download failed: {}", safe_error_text(&e.to_string()))),
             _ => unreachable!(),
         }}?;
-        let mut extracted = crate::pdf_processing::extract_pdf(&bytes, maximum)?;
+        let mut extracted = crate::pdf_processing::extract_pdf(&bytes, maximum)
+            .map_err(|error| format!("PDF extraction failed: {}", safe_error_text(&error.to_string())))?;
         crate::pdf_processing::repair_sponsr_title_from_filename(&row.3, &mut extracted);
         let html = extracted.html.clone();
         let classification = crate::pdf_processing::classify_promotion(&row.3, &extracted.first_page);
         sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(document_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint, extracted_text=excluded.extracted_text, first_page_text=excluded.first_page_text, sanitized_html=excluded.sanitized_html, page_count=excluded.page_count, processed_at=CURRENT_TIMESTAMP")
-            .bind(&document_id).bind(&cache_fingerprint).bind(&extracted.full_text).bind(&extracted.first_page).bind(html).bind(extracted.page_count as i64).execute(&pool).await.map_err(|e| e.to_string())?;
-        sqlx::query("UPDATE source_documents SET extraction_status='success', promotional_classification=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(classification).bind(&document_id).execute(&pool).await.map_err(|e| e.to_string())?;
+            .bind(&document_id).bind(&cache_fingerprint).bind(&extracted.full_text).bind(&extracted.first_page).bind(html).bind(extracted.page_count as i64).execute(&pool).await.map_err(|_| "cache update failed".to_owned())?;
+        sqlx::query("UPDATE source_documents SET extraction_status='success', promotional_classification=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(classification).bind(&document_id).execute(&pool).await.map_err(|_| "document status update failed".to_owned())?;
         Ok::<_, String>((extracted.page_count, extracted.full_text.chars().count(), extracted.first_page))
     }.await;
     match result {
@@ -334,9 +335,41 @@ pub async fn extract_document(
             first_page_sample: first_page.chars().take(500).collect(),
         })),
         Err(error) => {
+            let error = safe_error_text(&error);
             let _ = sqlx::query("UPDATE source_documents SET extraction_status='failure', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(&error).bind(&document_id).execute(&pool).await;
             Err(StatusCode::BAD_GATEWAY)
         }
+    }
+}
+
+fn safe_error_text(error: &str) -> String {
+    error
+        .split_whitespace()
+        .map(|part| {
+            if part.contains("://") {
+                "[URL redacted]"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(500)
+        .collect()
+}
+
+#[cfg(test)]
+mod safe_error_tests {
+    use super::safe_error_text;
+
+    #[test]
+    fn redacts_urls_from_stored_document_errors() {
+        let error = safe_error_text(
+            "request failed for https://files.example/a.pdf?signature=secret: timeout",
+        );
+        assert_eq!(error, "request failed for [URL redacted] timeout");
+        assert!(!error.contains("secret"));
     }
 }
 

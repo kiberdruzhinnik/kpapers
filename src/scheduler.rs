@@ -124,16 +124,34 @@ async fn process_one(pool: &SqlitePool) -> Result<bool, Box<dyn std::error::Erro
             let docs = feed_api::list_documents(Path(month_id.clone()), State(pool.clone()))
                 .await
                 .map_err(|_| "could not load discovered files".to_owned())?;
+            let mut document_errors = Vec::new();
             for document in docs.0 {
-                let _ = feed_api::extract_document(
-                    Path(document.id),
+                let document_id = document.id.clone();
+                if feed_api::extract_document(
+                    Path(document_id.clone()),
                     State(pool.clone()),
                     Query(feed_api::ForceQuery {
                         force: Some(job.force != 0),
                     }),
                 )
                 .await
-                .map_err(|_| "one or more PDFs could not be extracted".to_owned())?;
+                .is_err()
+                {
+                    let detail = sqlx::query_scalar::<_, Option<String>>(
+                        "SELECT last_error FROM source_documents WHERE id=?",
+                    )
+                    .bind(document_id)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|_| "could not load PDF failure details".to_owned())?
+                    .unwrap_or_else(|| {
+                        "PDF processing failed without a recorded detail".to_owned()
+                    });
+                    document_errors.push((document.filename, detail));
+                }
+            }
+            if !document_errors.is_empty() {
+                return Err(document_error_summary(&document_errors));
             }
             Ok::<(), String>(())
         }
@@ -171,6 +189,45 @@ async fn process_one(pool: &SqlitePool) -> Result<bool, Box<dyn std::error::Erro
     .await?;
     let _ = job.force;
     Ok(true)
+}
+
+fn document_error_summary(errors: &[(String, String)]) -> String {
+    truncate_error_summary(
+        errors
+            .iter()
+            .map(|(filename, detail)| format!("{filename}: {detail}"))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
+fn truncate_error_summary(mut error: String) -> String {
+    const MAX_SUMMARY_CHARS: usize = 4000;
+    if error.chars().count() > MAX_SUMMARY_CHARS {
+        error = error.chars().take(MAX_SUMMARY_CHARS - 3).collect();
+        error.push_str("...");
+    }
+    error
+}
+
+#[cfg(test)]
+mod error_summary_tests {
+    use super::document_error_summary;
+
+    #[test]
+    fn scheduled_refresh_summary_keeps_each_filename_and_failure_reason() {
+        let summary = document_error_summary(&[
+            ("first.pdf".into(), "download failed: timeout".into()),
+            (
+                "second.pdf".into(),
+                "PDF extraction failed: invalid header".into(),
+            ),
+        ]);
+        assert_eq!(
+            summary,
+            "first.pdf: download failed: timeout; second.pdf: PDF extraction failed: invalid header"
+        );
+    }
 }
 
 fn env_seconds(name: &str, default: i64) -> i64 {

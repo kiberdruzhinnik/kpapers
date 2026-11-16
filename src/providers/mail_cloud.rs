@@ -113,29 +113,7 @@ pub async fn download(
     if pdf.size > maximum_bytes {
         return Err("file exceeds configured size limit".into());
     }
-    super::validate_download_url("mail_cloud", &pdf.download_url)?;
-    let client = super::safe_client("mail", std::time::Duration::from_secs(60))?;
-    let response = client
-        .get(&pdf.download_url)
-        .send()
-        .await?
-        .error_for_status()?;
-    if response.status().is_redirection()
-        || response
-            .content_length()
-            .is_some_and(|size| size > maximum_bytes)
-    {
-        return Err("download destination rejected or exceeds size limit".into());
-    }
-    let mut response = response;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if bytes.len() as u64 + chunk.len() as u64 > maximum_bytes {
-            return Err("download exceeds configured size limit".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
+    super::download_from_url(&pdf.download_url, maximum_bytes).await
 }
 
 #[cfg(test)]
@@ -143,7 +121,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn download_rejects_disallowed_url_before_request() {
+    async fn download_rejects_private_network_before_request() {
         let pdf = RemotePdf {
             provider_id: "id".into(),
             path: "article.pdf".into(),
@@ -151,14 +129,14 @@ mod tests {
             size: 10,
             modified: None,
             fingerprint: "fingerprint".into(),
-            download_url: "http://127.0.0.1:1/internal".into(),
+            download_url: "https://127.0.0.1:1/internal".into(),
             public_url: "https://cloud.mail.ru/public/owner/token".into(),
         };
 
         let error = download(&pdf, 1024).await.unwrap_err();
         assert_eq!(
             error.to_string(),
-            "provider returned a download URL outside its HTTPS host allowlist"
+            "download host resolves to a private or non-public address"
         );
     }
 
