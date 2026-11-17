@@ -271,7 +271,7 @@ pub async fn extract_document(
     State(pool): State<SqlitePool>,
     Query(query): Query<ForceQuery>,
 ) -> Result<Json<ExtractionResult>, StatusCode> {
-    let row = sqlx::query_as::<_, (String, String, String, String, i64, String)>("SELECT fm.provider, fm.source_url, sd.source_path, sd.filename, sd.size_bytes, sd.content_fingerprint FROM source_documents sd JOIN feed_months fm ON fm.id = sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE sd.id = ? AND fm.active=1 AND fy.active=1 AND f.active=1")
+    let row = sqlx::query_as::<_, (String, String, String, String, i64, String, String)>("SELECT fm.provider, fm.source_url, sd.source_path, sd.filename, sd.size_bytes, sd.content_fingerprint, f.id FROM source_documents sd JOIN feed_months fm ON fm.id = sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE sd.id = ? AND fm.active=1 AND fy.active=1 AND f.active=1")
         .bind(&document_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let cache_fingerprint = crate::pdf_processing::cache_fingerprint(&row.5);
     let cached_fingerprint = sqlx::query_scalar::<_, String>(
@@ -301,20 +301,23 @@ pub async fn extract_document(
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(25 * 1024 * 1024);
+    let proxy = crate::proxy::resolve_for_feed(&pool, &row.6)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
     let result = async {
         let files = if row.1.starts_with("fixture://") {
             crate::providers::local_fixtures::list_root_pdfs(&row.1).await
         } else { match row.0.as_str() {
-            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1).await.map_err(|e| format!("source listing failed: {}", safe_error_text(&e.to_string()))),
-            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1).await.map_err(|e| format!("source listing failed: {}", safe_error_text(&e.to_string()))),
+            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1, &proxy).await.map_err(|e| format!("source listing failed: {}", proxy.redact_text(&safe_error_text(&e.to_string())))),
+            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1, &proxy).await.map_err(|e| format!("source listing failed: {}", proxy.redact_text(&safe_error_text(&e.to_string())))),
             _ => return Err("unsupported provider".to_owned()),
         }}?;
         let file = files.iter().find(|f| f.path == row.2).ok_or_else(|| "source lookup failed: file is no longer present in the public folder".to_owned())?;
         let bytes = if row.1.starts_with("fixture://") {
             crate::providers::local_fixtures::download(file, maximum as u64).await
         } else { match row.0.as_str() {
-            "yandex_disk" => crate::providers::yandex_disk::download(file, maximum as u64).await.map_err(|e| format!("download failed: {}", safe_error_text(&e.to_string()))),
-            "mail_cloud" => crate::providers::mail_cloud::download(file, maximum as u64).await.map_err(|e| format!("download failed: {}", safe_error_text(&e.to_string()))),
+            "yandex_disk" => crate::providers::yandex_disk::download(file, maximum as u64, &proxy).await.map_err(|e| format!("download failed: {}", proxy.redact_text(&safe_error_text(&e.to_string())))),
+            "mail_cloud" => crate::providers::mail_cloud::download(file, maximum as u64, &proxy).await.map_err(|e| format!("download failed: {}", proxy.redact_text(&safe_error_text(&e.to_string())))),
             _ => unreachable!(),
         }}?;
         let mut extracted = crate::pdf_processing::extract_pdf(&bytes, maximum)
@@ -335,7 +338,7 @@ pub async fn extract_document(
             first_page_sample: first_page.chars().take(500).collect(),
         })),
         Err(error) => {
-            let error = safe_error_text(&error);
+            let error = proxy.redact_text(&safe_error_text(&error));
             let _ = sqlx::query("UPDATE source_documents SET extraction_status='failure', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(&error).bind(&document_id).execute(&pool).await;
             Err(StatusCode::BAD_GATEWAY)
         }
@@ -377,16 +380,19 @@ pub async fn discover_month(
     Path(month_id): Path<String>,
     State(pool): State<SqlitePool>,
 ) -> Result<Json<DiscoveryResult>, StatusCode> {
-    let row = sqlx::query_as::<_, (String, String)>("SELECT fm.provider, fm.source_url FROM feed_months fm JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE fm.id = ? AND fm.active=1 AND fy.active=1 AND f.active=1")
+    let row = sqlx::query_as::<_, (String, String, String)>("SELECT fm.provider, fm.source_url, fm.feed_id FROM feed_months fm JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id WHERE fm.id = ? AND fm.active=1 AND fy.active=1 AND f.active=1")
         .bind(&month_id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    let proxy = crate::proxy::resolve_for_feed(&pool, &row.2)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
     let files = if row.1.starts_with("fixture://") {
         crate::providers::local_fixtures::list_root_pdfs(&row.1).await
     } else {
         match row.0.as_str() {
-            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1)
+            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1, &proxy)
                 .await
                 .map_err(|e| e.to_string()),
-            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1)
+            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1, &proxy)
                 .await
                 .map_err(|e| e.to_string()),
             _ => return Err(StatusCode::BAD_REQUEST),

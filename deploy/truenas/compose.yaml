@@ -5,6 +5,7 @@ services:
       - .env
     environment:
       DATABASE_URL: sqlite:///data/kpapers.sqlite?mode=rwc
+      KPAPERS_PROXY_URL: ${KPAPERS_PROXY_URL:-}
     volumes:
       - ./kpapers_data:/data
     healthcheck:

@@ -12,6 +12,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       CURRENT_MONTH_REFRESH_SECONDS: ${CURRENT_MONTH_REFRESH_SECONDS:-3600}
       OLDER_MONTH_REFRESH_SECONDS: ${OLDER_MONTH_REFRESH_SECONDS:-86400}
+      KPAPERS_PROXY_URL: ${KPAPERS_PROXY_URL:-}
     volumes:
       - kpapers_data:/data
     networks:

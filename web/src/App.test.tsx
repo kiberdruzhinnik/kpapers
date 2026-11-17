@@ -27,6 +27,7 @@ function response(body: unknown, status = 200) {
 function installApi(initiallySignedIn = false, overviewResponse: () => Promise<Response> = async () => response({ source_folder_count: 3, needs_review_count: 2 })) {
   window.history.replaceState({}, "", "/")
   let signedIn = initiallySignedIn
+  let globalProxy = { configured: false, endpoint: null as string | null }
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
     if (path === "/api/management/session" && init?.method === "DELETE") {
@@ -42,6 +43,16 @@ function installApi(initiallySignedIn = false, overviewResponse: () => Promise<R
     }
     if (path === "/api/management/feeds") return signedIn ? response([sampleFeed, secondFeed]) : response(null, 401)
     if (path === "/api/management/overview") return signedIn ? overviewResponse() : response(null, 401)
+    if (path === "/api/management/settings/proxy" && (init?.method ?? "GET") === "GET") return signedIn ? response(globalProxy) : response(null, 401)
+    if (path === "/api/management/settings/proxy" && init?.method === "PUT") {
+      const payload = JSON.parse(String(init.body)) as { proxy_url: string }
+      globalProxy = { configured: true, endpoint: payload.proxy_url.replace(/:\/\/([^:/]+):([^@]+)@/, "://redacted:redacted@") }
+      return signedIn ? response(globalProxy) : response(null, 401)
+    }
+    if (path === "/api/management/settings/proxy" && init?.method === "DELETE") {
+      globalProxy = { configured: false, endpoint: null }
+      return signedIn ? response(null, 204) : response(null, 401)
+    }
     if (path === "/api/management/review-queue?archived=false" || path === "/api/management/review-queue?archived=true") return signedIn ? response([]) : response(null, 401)
     if (path === "/api/management/feeds/feed-1/years") return signedIn ? response([{ feed_id: "feed-1", year: 2026, active: true }]) : response(null, 401)
     if (path === "/api/management/feeds/feed-2/years") return signedIn ? response([{ feed_id: "feed-2", year: 2025, active: true }]) : response(null, 401)
@@ -136,6 +147,42 @@ describe("operator session and dashboard shell", () => {
     expect(await screen.findByRole("heading", { name: "PDF review" })).toBeInTheDocument()
     expect(await screen.findByText("Ada Lovelace · 2026 · November")).toBeInTheDocument()
     expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1")
+  })
+
+  it("opens protected global proxy settings directly and keeps credentials write-only", async () => {
+    const fetchMock = installApi(true)
+    window.history.replaceState({}, "", "/manage/settings")
+    const user = userEvent.setup()
+    render(<App />)
+
+    expect(await screen.findByRole("heading", { name: "Global fetch proxy" })).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/manage/settings")
+    expect(await screen.findByTestId("global-proxy-status")).toHaveTextContent("No global GUI proxy is configured.")
+    await user.type(screen.getByLabelText("Proxy URL"), "ftp://proxy.example:21")
+    await user.click(screen.getByRole("button", { name: "Save proxy" }))
+    expect((await screen.findAllByText("Proxy URL must use http:// or socks5://.")).length).toBeGreaterThan(0)
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/management/settings/proxy", expect.objectContaining({ method: "PUT" }))
+
+    const field = screen.getByLabelText("Proxy URL")
+    await user.clear(field)
+    await user.type(field, "http://alice:topsecret@proxy.example:8080")
+    await user.click(screen.getByRole("button", { name: "Save proxy" }))
+    expect(await screen.findByText("A global proxy is configured")).toBeInTheDocument()
+    expect(screen.queryByText(/topsecret|alice/)).not.toBeInTheDocument()
+    expect(field).toHaveValue("")
+    expect(fetchMock).toHaveBeenCalledWith("/api/management/settings/proxy", expect.objectContaining({ method: "PUT" }))
+
+    await user.click(screen.getByRole("button", { name: "Clear global proxy" }))
+    expect(await screen.findByText("No global GUI proxy is configured.")).toBeInTheDocument()
+  })
+
+  it("does not expose settings to an unauthenticated visitor", async () => {
+    installApi(false)
+    window.history.replaceState({}, "", "/manage/settings")
+    render(<App />)
+
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Global fetch proxy" })).not.toBeInTheDocument()
   })
 
   it("opens the archived queue directly and preserves the source browser route", async () => {

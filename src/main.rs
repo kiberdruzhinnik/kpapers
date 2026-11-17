@@ -71,6 +71,8 @@ async fn healthcheck() -> Result<(), String> {
 }
 
 async fn serve() -> Result<(), Box<dyn std::error::Error>> {
+    proxy::validate_environment()
+        .map_err(|error| std::io::Error::other(format!("invalid KPAPERS_PROXY_URL: {error}")))?;
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://kpapers.db?mode=rwc".to_owned());
     let pool = db::connect_and_migrate(&database_url).await?;
@@ -93,6 +95,16 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
             get(management_session).delete(auth::logout),
         )
         .route("/api/management/overview", get(feed_api::overview_summary))
+        .route(
+            "/api/management/settings/proxy",
+            get(proxy_settings::get_global)
+                .put(proxy_settings::set_global)
+                .delete(proxy_settings::clear_global),
+        )
+        .route(
+            "/api/management/feeds/{feed_id}/proxy",
+            get(proxy_settings::get_feed).put(proxy_settings::set_feed),
+        )
         .route(
             "/api/management/review-queue",
             get(feed_api::list_review_queue),
@@ -219,6 +231,8 @@ mod feed_api;
 mod logging;
 mod pdf_processing;
 mod providers;
+mod proxy;
+mod proxy_settings;
 mod rss;
 mod scheduler;
 #[cfg(test)]

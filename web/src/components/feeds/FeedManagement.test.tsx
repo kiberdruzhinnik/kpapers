@@ -27,6 +27,7 @@ function installFeedApi(initial: TestFeed[] = []) {
   let feeds = structuredClone(initial)
   let years: { feed_id: string; year: number; active: boolean }[] = []
   let months: { id: string; feed_id: string; year: number; month: number; provider: string; source_url: string; active: boolean; last_attempt_at: string | null; next_refresh_at: string | null; last_result: string | null; last_error: string | null }[] = []
+  let feedProxy: { mode: "inherit" | "direct" | "custom"; configured: boolean; endpoint: string | null } = { mode: "inherit", configured: false, endpoint: null }
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
     const method = init?.method ?? "GET"
@@ -38,6 +39,12 @@ function installFeedApi(initial: TestFeed[] = []) {
       const created: TestFeed = { ...payload, id: "feed-new", active: true }
       feeds = [...feeds, created]
       return json(created, 201)
+    }
+    if (path === "/api/management/feeds/feed-1/proxy" && method === "GET") return json(feedProxy)
+    if (path === "/api/management/feeds/feed-1/proxy" && method === "PUT") {
+      const payload = JSON.parse(String(init?.body)) as { mode: "inherit" | "direct" | "custom"; proxy_url?: string }
+      feedProxy = { mode: payload.mode, configured: payload.mode === "custom", endpoint: payload.proxy_url?.replace(/:\/\/([^:/]+):([^@]+)@/, "://redacted:redacted@") ?? null }
+      return json(feedProxy)
     }
     if (path === "/api/management/feeds/feed-1/years" && method === "GET") return json(years)
     if (path === "/api/management/feeds/feed-1/years" && method === "POST") {
@@ -120,6 +127,40 @@ async function openFeeds(user: ReturnType<typeof userEvent.setup>) {
 
 describe("feed management workflows", () => {
   beforeEach(() => localStorage.clear())
+  it("saves per-feed proxy modes and keeps custom credentials write-only", async () => {
+    const fetchMock = installFeedApi([feed])
+    const user = userEvent.setup()
+    render(<App />)
+    await openFeeds(user)
+
+    expect(await screen.findByText(/Uses the global GUI proxy, then KPAPERS_PROXY_URL/)).toBeInTheDocument()
+    const mode = screen.getByRole("combobox", { name: "Proxy mode" })
+    await user.click(mode)
+    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}")
+    const proxyField = screen.getByLabelText("Custom proxy URL")
+    await user.type(proxyField, "ftp://proxy.example:21")
+    await user.click(screen.getByRole("button", { name: "Save proxy settings" }))
+    expect((await screen.findAllByText("Proxy URL must use http:// or socks5://.")).length).toBeGreaterThan(0)
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/management/feeds/feed-1/proxy", expect.objectContaining({ method: "PUT" }))
+
+    await user.clear(proxyField)
+    await user.type(proxyField, "socks5://feeduser:feedsecret@proxy.example:1080")
+    await user.click(screen.getByRole("button", { name: "Save proxy settings" }))
+    expect(await screen.findByText(/Custom proxy configured:/)).toBeInTheDocument()
+    expect(screen.queryByText(/feedsecret|feeduser/)).not.toBeInTheDocument()
+    expect(proxyField).toHaveValue("")
+
+    await user.click(mode)
+    await user.keyboard("{ArrowUp}{Enter}")
+    await user.click(screen.getByRole("button", { name: "Save proxy settings" }))
+    await waitFor(() => expect(screen.getByText(/Bypasses both the global GUI proxy and KPAPERS_PROXY_URL/)).toBeInTheDocument())
+    const proxyWrites = fetchMock.mock.calls.filter(([path, init]) => String(path) === "/api/management/feeds/feed-1/proxy" && init?.method === "PUT")
+    expect(proxyWrites.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { mode: "custom", proxy_url: "socks5://feeduser:feedsecret@proxy.example:1080" },
+      { mode: "direct" },
+    ])
+  })
+
   it("copies the RSS address with the Clipboard API when available", async () => {
     installFeedApi([feed])
     const writeText = vi.fn().mockResolvedValue(undefined)

@@ -1,4 +1,5 @@
 use super::RemotePdf;
+use crate::proxy::EffectiveProxy;
 use serde::Deserialize;
 use url::Url;
 
@@ -35,11 +36,12 @@ pub(crate) struct DownloadResponse {
 
 pub async fn list_root_pdfs(
     public_url: &str,
+    proxy: &EffectiveProxy,
 ) -> Result<Vec<RemotePdf>, Box<dyn std::error::Error + Send + Sync>> {
     if super::validate_source_url(public_url) != Ok("yandex_disk") {
         return Err("unsupported Yandex Disk URL".into());
     }
-    let client = super::safe_client("yandex", std::time::Duration::from_secs(20))?;
+    let client = super::safe_client("yandex", std::time::Duration::from_secs(20), proxy)?;
     let mut offset = 0u64;
     let mut found = Vec::new();
     loop {
@@ -106,11 +108,12 @@ pub async fn list_root_pdfs(
 pub async fn download(
     pdf: &RemotePdf,
     maximum_bytes: u64,
+    proxy: &EffectiveProxy,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if pdf.size > maximum_bytes {
         return Err("file exceeds configured size limit".into());
     }
-    super::download_from_url(&pdf.download_url, maximum_bytes).await
+    super::download_from_url(&pdf.download_url, maximum_bytes, proxy).await
 }
 
 #[cfg(test)]
@@ -130,7 +133,9 @@ mod tests {
             public_url: "https://disk.yandex.ru/d/token".into(),
         };
 
-        let error = download(&pdf, 1024).await.unwrap_err();
+        let error = download(&pdf, 1024, &EffectiveProxy::Direct)
+            .await
+            .unwrap_err();
         assert_eq!(
             error.to_string(),
             "download host resolves to a private or non-public address"

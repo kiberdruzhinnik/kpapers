@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { BookOpenText, CheckCircle2, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, ShieldCheck } from "lucide-react"
+import { BookOpenText, CheckCircle2, ChevronDown, Command, Files, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, Rss, Settings as SettingsIcon, ShieldCheck } from "lucide-react"
 import { BrowserRouter, Link, useLocation, useNavigate } from "react-router-dom"
 import { ApiError, api, type Feed, type OverviewSummary, type ReviewQueueMode } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -10,18 +10,20 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Toaster } from "@/components/ui/sonner"
 import { CreateFeed, FeedManagement } from "@/components/feeds/FeedManagement"
 import { PdfReview } from "@/components/documents/PdfReview"
+import { ProxySettingsPage } from "@/components/settings/ProxySettings"
 import { cn } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 
 type SessionState = "checking" | "signed-out" | "signed-in"
-export type Section = "Overview" | "Feeds" | "PDF review"
+export type Section = "Overview" | "Feeds" | "PDF review" | "Settings"
 const SIDEBAR_STORAGE_KEY = "kpapers.sidebar.collapsed.v1"
 
 const navItems: { label: Section; description: string; icon: typeof LayoutDashboard }[] = [
   { label: "Overview", description: "Workspace summary", icon: LayoutDashboard },
   { label: "Feeds", description: "Authors and sources", icon: Files },
   { label: "PDF review", description: "Publication decisions", icon: BookOpenText },
+  { label: "Settings", description: "Fetch proxy", icon: SettingsIcon },
 ]
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -43,6 +45,7 @@ type DashboardRoute = { creating?: boolean; section: Section; feedId?: string; r
 
 function routeFromPath(pathname: string, search = ""): DashboardRoute {
   if (["/", "/manage", "/manage/"].includes(pathname)) return { section: "Overview" }
+  if (pathname === "/manage/settings") return { section: "Settings" }
   if (pathname === "/manage/feeds/new") return { section: "Feeds", creating: true }
   if (pathname === "/manage/feeds") return { section: "Feeds" }
   if (pathname === "/manage/pdf-review") {
@@ -76,7 +79,7 @@ function routeFromPath(pathname: string, search = ""): DashboardRoute {
 }
 
 function sectionPath(section: Section) {
-  return section === "Overview" ? "/manage/" : section === "Feeds" ? "/manage/feeds" : "/manage/pdf-review"
+  return section === "Overview" ? "/manage/" : section === "Feeds" ? "/manage/feeds" : section === "PDF review" ? "/manage/pdf-review" : "/manage/settings"
 }
 
 function feedPath(feedId?: string | null) {
@@ -433,7 +436,9 @@ function AppContent() {
               ? route.creating
                 ? <CreateFeed onCancel={() => navigate("/manage/feeds")} onCreated={(feed) => { setFeeds((current) => [...current, feed]); navigate(feedPath(feed.id)) }} />
                 : <FeedManagement onCreate={() => navigate("/manage/feeds/new")} feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(reviewPath({ feedId: month.feed_id, year: month.year, monthId: month.id }))} onSelectFeed={(feedId) => navigate(feedPath(feedId))} selectedFeedId={route.feedId ?? null} />
-              : <PdfReview feeds={feeds} initialQueueMode={reviewQueueMode} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(feedPath(reviewSelection?.feedId))} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onQueueModeChange={updateReviewQueue} onSelectionChange={updateReviewSelection} />}
+              : section === "PDF review"
+                ? <PdfReview feeds={feeds} initialQueueMode={reviewQueueMode} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(feedPath(reviewSelection?.feedId))} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onQueueModeChange={updateReviewQueue} onSelectionChange={updateReviewSelection} />
+                : <ProxySettingsPage />}
         </DashboardShell>}
     </>
   )

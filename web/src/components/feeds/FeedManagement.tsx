@@ -24,6 +24,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { HierarchyManagement } from "@/components/feeds/HierarchyManagement"
+import { FeedProxySettings } from "@/components/feeds/FeedProxySettings"
 
 type FeedFormValues = { display_name: string; description: string; refresh_hours: string }
 type ConfirmAction = { kind: "archive" | "delete"; feed: Feed }
@@ -188,6 +189,7 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
         </CardContent>
       </Card>
 
+      <FeedProxySettings feedId={feed.id} key={feed.id} />
 
       <HierarchyManagement active={feed.active} feedId={feed.id} onReviewMonth={onReviewMonth} />
 

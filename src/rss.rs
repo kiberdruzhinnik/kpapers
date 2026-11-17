@@ -85,12 +85,12 @@ pub async fn review_download(
 
 async fn document_redirect(pool: SqlitePool, document_id: String, public_only: bool) -> Response {
     let row = if public_only {
-        sqlx::query_as::<_, (String, String, String)>(
-            "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id JOIN cached_content cc ON cc.document_id=sd.id WHERE sd.id=? AND f.active=1 AND fy.active=1 AND fm.active=1 AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish'",
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT fm.provider, fm.source_url, sd.source_path, fm.feed_id FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year JOIN feeds f ON f.id=fm.feed_id JOIN cached_content cc ON cc.document_id=sd.id WHERE sd.id=? AND f.active=1 AND fy.active=1 AND fm.active=1 AND CASE COALESCE(sd.promotional_override, sd.promotional_classification) WHEN 'include' THEN 'publish' WHEN 'exclude' THEN 'promotional' ELSE COALESCE(sd.promotional_override, sd.promotional_classification) END='publish'",
         ).bind(&document_id).fetch_optional(&pool).await
     } else {
-        sqlx::query_as::<_, (String, String, String)>(
-            "SELECT fm.provider, fm.source_url, sd.source_path FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id WHERE sd.id=?",
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT fm.provider, fm.source_url, sd.source_path, fm.feed_id FROM source_documents sd JOIN feed_months fm ON fm.id=sd.month_id WHERE sd.id=?",
         ).bind(&document_id).fetch_optional(&pool).await
     };
     let row = match row {
@@ -99,16 +99,20 @@ async fn document_redirect(pool: SqlitePool, document_id: String, public_only: b
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
+    let proxy = match crate::proxy::resolve_for_feed(&pool, &row.3).await {
+        Ok(proxy) => proxy,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
     let files = if row.1.starts_with("fixture://") {
         crate::providers::local_fixtures::list_root_pdfs(&row.1)
             .await
             .map_err(|e| e.to_string())
     } else {
         match row.0.as_str() {
-            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1)
+            "yandex_disk" => crate::providers::yandex_disk::list_root_pdfs(&row.1, &proxy)
                 .await
                 .map_err(|e| e.to_string()),
-            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1)
+            "mail_cloud" => crate::providers::mail_cloud::list_root_pdfs(&row.1, &proxy)
                 .await
                 .map_err(|e| e.to_string()),
             _ => return StatusCode::BAD_GATEWAY.into_response(),

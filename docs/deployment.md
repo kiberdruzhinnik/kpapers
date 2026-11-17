@@ -56,6 +56,12 @@ The script generates and prints a random operator password, binds the web servic
 ./scripts/quickstart-down.sh
 ```
 
+## Optional fetch proxy
+
+Set `KPAPERS_PROXY_URL` in `.env` to route inherited feeds through a deployment-wide HTTP or SOCKS5 proxy, for example `KPAPERS_PROXY_URL=socks5://proxy.example:1080` or `KPAPERS_PROXY_URL=http://user:password@proxy.example:8080`. The application validates this value at startup and rejects unsupported schemes or malformed URLs without printing credentials. Omit it to use a direct connection when no GUI proxy is set.
+
+Per-feed custom proxy settings take precedence, followed by the global GUI setting, then `KPAPERS_PROXY_URL`, then direct access. A feed set to **Connect directly** bypasses all proxy settings. GUI proxy URLs are stored in the application SQLite database; limit access to the data volume and its backups. Keep `.env` private because an environment proxy URL may also contain credentials. Proxy URLs do not change the application's public folder URL validation or download safety limits.
+
 ## PDF text extraction
 
 The API extracts each PDF page with the default plain-text API in `pdf_oxide`. Extraction runs in-process, without OCR or an auxiliary worker. Scanned-only PDFs without an extractable text layer are reported as failures; the last successful cached content remains available.

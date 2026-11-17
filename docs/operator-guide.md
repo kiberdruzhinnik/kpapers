@@ -31,3 +31,11 @@ RSS readers do not need an operator session. Share the stable `/feeds/{feed-id}`
 Month **Last attempt** and **Next refresh** use your browser’s local timezone, including daylight-saving offsets, in `YYYY-MM-DD HH:mm:ss` format. Missing values appear as **Never** and **Pending**.
 
 All dashboard pages use `/manage/`; previous dashboard bookmarks should be updated. Public RSS URLs at `/feeds/{feed-id}` remain unchanged.
+
+## Configure fetch proxies
+
+Open **Settings** at `/manage/settings` to set, replace, or clear the global fetch proxy. The setting applies to feeds in **Inherit global settings** mode. On an individual feed's detail page, **Fetch proxy** can inherit the global setting, connect directly, or use a custom proxy for that feed. Direct mode bypasses both the global setting and `KPAPERS_PROXY_URL`.
+
+Proxy URLs must use `http://` or `socks5://` and include a hostname and port, for example `http://proxy.example:8080` or `socks5://user:password@proxy.example:1080`. Credentials are optional. The UI accepts credentials when saving but never returns them to the browser; after saving, enter a replacement URL to change credentials. The displayed endpoint masks credentials.
+
+For inherited feeds the precedence is feed custom proxy, global GUI setting, `KPAPERS_PROXY_URL`, then a direct connection. Store proxy URLs containing credentials only in a trusted deployment and restrict access to the application database and its backups: GUI proxy URLs are stored in SQLite. Use environment configuration when credentials should be managed outside the database.

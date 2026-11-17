@@ -6,6 +6,15 @@ export type Feed = {
   refresh_interval_seconds: number | null
 }
 
+export type ProxySettings = {
+  configured: boolean
+  endpoint: string | null
+}
+
+export type FeedProxySettings = ProxySettings & {
+  mode: "inherit" | "direct" | "custom"
+}
+
 export type Year = {
   feed_id: string
   year: number
@@ -116,6 +125,19 @@ export const api = {
   logout: () => request<void>("/api/management/session", json("DELETE")),
   feeds: () => request<Feed[]>("/api/management/feeds"),
   overview: () => request<OverviewSummary>("/api/management/overview"),
+  globalProxy: () => request<ProxySettings>("/api/management/settings/proxy"),
+  saveGlobalProxy: (proxy_url: string) => request<ProxySettings>(
+    "/api/management/settings/proxy", json("PUT", { proxy_url }),
+  ),
+  clearGlobalProxy: () => request<void>("/api/management/settings/proxy", json("DELETE")),
+  feedProxy: (feedId: string) => request<FeedProxySettings>(
+    `/api/management/feeds/${encodeURIComponent(feedId)}/proxy`,
+  ),
+  saveFeedProxy: (feedId: string, mode: FeedProxySettings["mode"], proxy_url?: string) =>
+    request<FeedProxySettings>(
+      `/api/management/feeds/${encodeURIComponent(feedId)}/proxy`,
+      json("PUT", { mode, ...(proxy_url ? { proxy_url } : {}) }),
+    ),
   reviewQueue: (archived: boolean) => request<ReviewQueueDocument[]>(
     `/api/management/review-queue?archived=${archived}`,
   ),

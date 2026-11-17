@@ -13,7 +13,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 ipnet = "2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json"] }

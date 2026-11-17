@@ -2,6 +2,8 @@ pub mod local_fixtures;
 pub mod mail_cloud;
 pub mod yandex_disk;
 
+use crate::proxy::EffectiveProxy;
+
 #[derive(Clone, Debug)]
 pub struct RemotePdf {
     pub provider_id: String,
@@ -19,19 +21,20 @@ const MAX_DOWNLOAD_REDIRECTS: usize = 5;
 pub async fn download_from_url(
     raw: &str,
     maximum_bytes: u64,
+    proxy: &EffectiveProxy,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let mut current =
         url::Url::parse(raw).map_err(|_| "provider returned an invalid download URL")?;
     for redirect_count in 0..=MAX_DOWNLOAD_REDIRECTS {
         let (host, port) = validate_download_url_shape(&current)?;
         let addresses = resolve_public_addresses(&host, port).await?;
-        let client = pinned_client(&host, &addresses, std::time::Duration::from_secs(60))
-            .map_err(safe_reqwest_error)?;
+        let client = download_client(&host, &addresses, std::time::Duration::from_secs(60), proxy)
+            .map_err(|error| safe_reqwest_error(error, proxy))?;
         let response = client
             .get(current.clone())
             .send()
             .await
-            .map_err(safe_reqwest_error)?;
+            .map_err(|error| safe_reqwest_error(error, proxy))?;
         if response.status().is_redirection() {
             if redirect_count == MAX_DOWNLOAD_REDIRECTS {
                 return Err("download exceeded the redirect limit".into());
@@ -47,16 +50,17 @@ pub async fn download_from_url(
         if !response.status().is_success() {
             return Err(format!("download server returned HTTP {}", response.status()).into());
         }
-        if response
-            .content_length()
-            .is_some_and(|size| size > maximum_bytes)
-        {
+        if response_size_exceeds(maximum_bytes, response.content_length()) {
             return Err("download exceeds configured size limit".into());
         }
         let mut response = response;
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(safe_reqwest_error)? {
-            if bytes.len() as u64 + chunk.len() as u64 > maximum_bytes {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| safe_reqwest_error(error, proxy))?
+        {
+            if !download_chunk_fits(maximum_bytes, bytes.len() as u64, chunk.len() as u64) {
                 return Err("download exceeds configured size limit".into());
             }
             bytes.extend_from_slice(&chunk);
@@ -66,17 +70,29 @@ pub async fn download_from_url(
     Err("download exceeded the redirect limit".into())
 }
 
-fn pinned_client(
+fn response_size_exceeds(maximum_bytes: u64, content_length: Option<u64>) -> bool {
+    content_length.is_some_and(|size| size > maximum_bytes)
+}
+
+fn download_chunk_fits(maximum_bytes: u64, current_bytes: u64, chunk_bytes: u64) -> bool {
+    current_bytes
+        .checked_add(chunk_bytes)
+        .is_some_and(|total| total <= maximum_bytes)
+}
+
+fn download_client(
     host: &str,
     addresses: &[std::net::SocketAddr],
     timeout: std::time::Duration,
+    proxy: &EffectiveProxy,
 ) -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .no_proxy()
+    let builder = reqwest::Client::builder()
         .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(host, addresses)
-        .build()
+        .redirect(reqwest::redirect::Policy::none());
+    match proxy {
+        EffectiveProxy::Direct => builder.no_proxy().resolve_to_addrs(host, addresses).build(),
+        EffectiveProxy::Proxy(_) => proxy.configure(builder)?.build(),
+    }
 }
 
 async fn validate_redirect_target(
@@ -187,16 +203,21 @@ fn is_in_networks(ip: std::net::IpAddr, networks: &[&str]) -> bool {
     })
 }
 
-fn safe_reqwest_error(error: reqwest::Error) -> String {
-    error.without_url().to_string().chars().take(300).collect()
+fn safe_reqwest_error(error: reqwest::Error, proxy: &EffectiveProxy) -> String {
+    proxy
+        .redact_text(&error.without_url().to_string())
+        .chars()
+        .take(300)
+        .collect()
 }
 
 pub fn safe_client(
     provider: &'static str,
     timeout: std::time::Duration,
+    proxy: &EffectiveProxy,
 ) -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .timeout(timeout)
+    let builder = proxy.configure(reqwest::Client::builder().timeout(timeout))?;
+    builder
         .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             let url = attempt.url();
             let host = url.host_str().unwrap_or_default();
@@ -276,6 +297,142 @@ pub fn validate_source_url(raw: &str) -> Result<&'static str, &'static str> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn provider_clients_use_authenticated_http_proxy_for_api_requests() {
+        for (provider, target) in [
+            (
+                "yandex",
+                "https://cloud-api.yandex.net/v1/disk/public/resources",
+            ),
+            ("mail", "https://cloud.mail.ru/api/v2/folder"),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let proxy_server = std::thread::spawn(move || {
+                use std::io::{Read, Write};
+                let (mut stream, _) = listener.accept().unwrap();
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(3)));
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = stream.read(&mut chunk).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.len() > 8192 {
+                        break;
+                    }
+                }
+                stream
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                    .unwrap();
+                String::from_utf8_lossy(&request).into_owned()
+            });
+            let proxy =
+                crate::proxy::ProxyUrl::parse(&format!("http://alice:secret@{address}")).unwrap();
+            let policy = EffectiveProxy::Proxy(proxy);
+            let client = safe_client(provider, std::time::Duration::from_secs(3), &policy).unwrap();
+            let error = client.get(target).send().await.unwrap_err();
+            let message = policy.redact_text(&error.without_url().to_string());
+            assert!(!message.contains("alice"));
+            assert!(!message.contains("secret"));
+            let request = proxy_server.join().unwrap();
+            assert!(request.starts_with(&format!(
+                "CONNECT {}:443 ",
+                url::Url::parse(target).unwrap().host_str().unwrap()
+            )));
+            let authorization = request
+                .lines()
+                .find(|line| {
+                    line.to_ascii_lowercase()
+                        .starts_with("proxy-authorization:")
+                })
+                .expect("proxy authentication header");
+            assert_eq!(
+                authorization.split_once(':').unwrap().1.trim(),
+                "Basic YWxpY2U6c2VjcmV0"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_client_authenticates_to_socks5_proxy() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let proxy_server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut greeting = [0u8; 2];
+            stream.read_exact(&mut greeting).unwrap();
+            let mut methods = vec![0; greeting[1] as usize];
+            stream.read_exact(&mut methods).unwrap();
+            assert_eq!(greeting[0], 5);
+            assert!(methods.contains(&2));
+            stream.write_all(&[5, 2]).unwrap();
+
+            let mut auth_header = [0u8; 2];
+            stream.read_exact(&mut auth_header).unwrap();
+            let mut username = vec![0; auth_header[1] as usize];
+            stream.read_exact(&mut username).unwrap();
+            let mut password_length = [0u8; 1];
+            stream.read_exact(&mut password_length).unwrap();
+            let mut password = vec![0; password_length[0] as usize];
+            stream.read_exact(&mut password).unwrap();
+            stream.write_all(&[1, 0]).unwrap();
+
+            let mut connect_header = [0u8; 4];
+            stream.read_exact(&mut connect_header).unwrap();
+            let host = match connect_header[3] {
+                1 => {
+                    let mut address = [0; 4];
+                    stream.read_exact(&mut address).unwrap();
+                    std::net::Ipv4Addr::from(address).to_string()
+                }
+                3 => {
+                    let mut length = [0; 1];
+                    stream.read_exact(&mut length).unwrap();
+                    let mut address = vec![0; length[0] as usize];
+                    stream.read_exact(&mut address).unwrap();
+                    String::from_utf8(address).unwrap()
+                }
+                4 => {
+                    let mut address = [0; 16];
+                    stream.read_exact(&mut address).unwrap();
+                    std::net::Ipv6Addr::from(address).to_string()
+                }
+                other => panic!("unexpected SOCKS address type {other}"),
+            };
+            let mut port = [0; 2];
+            stream.read_exact(&mut port).unwrap();
+            stream.write_all(&[5, 5, 0, 1, 127, 0, 0, 1, 0, 0]).unwrap();
+            (
+                String::from_utf8(username).unwrap(),
+                String::from_utf8(password).unwrap(),
+                host,
+                u16::from_be_bytes(port),
+            )
+        });
+
+        let proxy =
+            crate::proxy::ProxyUrl::parse(&format!("socks5://alice:secret@{address}")).unwrap();
+        let policy = EffectiveProxy::Proxy(proxy);
+        let client = safe_client("yandex", std::time::Duration::from_secs(3), &policy).unwrap();
+        assert!(
+            client
+                .get("https://cloud-api.yandex.net/v1/disk/public/resources")
+                .send()
+                .await
+                .is_err()
+        );
+        let (username, password, host, port) = proxy_server.join().unwrap();
+        assert_eq!(username, "alice");
+        assert_eq!(password, "secret");
+        assert_eq!(port, 443);
+        let ip = host.parse::<std::net::IpAddr>().unwrap();
+        assert!(is_public_address(ip), "SOCKS5 target was not public: {ip}");
+    }
+
     #[test]
     fn source_url_validation_enforces_provider_hosts_and_link_shapes() {
         assert_eq!(
@@ -347,9 +504,65 @@ mod tests {
                 "download URL must not contain credentials",
             ),
         ] {
-            let error = download_from_url(url, 1024).await.unwrap_err();
+            let error = download_from_url(url, 1024, &crate::proxy::EffectiveProxy::Direct)
+                .await
+                .unwrap_err();
             assert_eq!(error.to_string(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn proxied_download_uses_connect_and_rejects_private_destination_before_connecting() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let proxy_server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(3)));
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if request.len() > 8192 {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        let proxy =
+            crate::proxy::ProxyUrl::parse(&format!("http://alice:secret@{address}")).unwrap();
+        let policy = EffectiveProxy::Proxy(proxy);
+        let error = download_from_url("https://8.8.8.8/file.pdf", 1024, &policy)
+            .await
+            .unwrap_err();
+        assert!(!error.to_string().contains("secret"));
+        let request = proxy_server.join().unwrap();
+        assert!(request.starts_with("CONNECT 8.8.8.8:443 "), "{request}");
+
+        let error = download_from_url("https://127.0.0.1/private.pdf", 1024, &policy)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "download host resolves to a private or non-public address"
+        );
+    }
+
+    #[test]
+    fn download_size_guards_reject_content_lengths_and_streamed_chunks_over_the_limit() {
+        assert!(!response_size_exceeds(10, None));
+        assert!(!response_size_exceeds(10, Some(10)));
+        assert!(response_size_exceeds(10, Some(11)));
+        assert!(download_chunk_fits(10, 5, 5));
+        assert!(!download_chunk_fits(10, 5, 6));
+        assert!(!download_chunk_fits(u64::MAX, u64::MAX, 1));
     }
 
     #[test]
@@ -381,10 +594,11 @@ mod tests {
     fn pinned_client_uses_only_the_supplied_resolution() {
         let validated = ["8.8.8.8:443".parse().unwrap()];
         assert!(
-            pinned_client(
+            download_client(
                 "controlled-resolution.test",
                 &validated,
                 std::time::Duration::from_secs(2),
+                &EffectiveProxy::Direct,
             )
             .is_ok()
         );

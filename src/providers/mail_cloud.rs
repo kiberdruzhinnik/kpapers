@@ -1,4 +1,5 @@
 use super::RemotePdf;
+use crate::proxy::EffectiveProxy;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 
@@ -33,6 +34,7 @@ pub(crate) struct DispatcherUrl {
 
 pub async fn list_root_pdfs(
     public_url: &str,
+    proxy: &EffectiveProxy,
 ) -> Result<Vec<RemotePdf>, Box<dyn std::error::Error + Send + Sync>> {
     let parsed = url::Url::parse(public_url)?;
     if parsed.scheme() != "https"
@@ -53,7 +55,7 @@ pub async fn list_root_pdfs(
     {
         return Err("invalid Mail Cloud public folder path".into());
     }
-    let client = super::safe_client("mail", std::time::Duration::from_secs(20))?;
+    let client = super::safe_client("mail", std::time::Duration::from_secs(20), proxy)?;
     let response: ApiResponse<Folder> = client
         .get(format!("{API}/folder"))
         .query(&[("weblink", token), ("folder", "/")])
@@ -109,11 +111,12 @@ pub async fn list_root_pdfs(
 pub async fn download(
     pdf: &RemotePdf,
     maximum_bytes: u64,
+    proxy: &EffectiveProxy,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     if pdf.size > maximum_bytes {
         return Err("file exceeds configured size limit".into());
     }
-    super::download_from_url(&pdf.download_url, maximum_bytes).await
+    super::download_from_url(&pdf.download_url, maximum_bytes, proxy).await
 }
 
 #[cfg(test)]
@@ -133,7 +136,9 @@ mod tests {
             public_url: "https://cloud.mail.ru/public/owner/token".into(),
         };
 
-        let error = download(&pdf, 1024).await.unwrap_err();
+        let error = download(&pdf, 1024, &EffectiveProxy::Direct)
+            .await
+            .unwrap_err();
         assert_eq!(
             error.to_string(),
             "download host resolves to a private or non-public address"

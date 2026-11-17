@@ -4,6 +4,10 @@ The single API instance checks for due linked months every five seconds. By defa
 
 Each due or forced run is persisted in `refresh_jobs`. Month rows expose last attempt, next refresh, and the latest result in the operator view. **Fetch and parse** performs an immediate month scan; **Force refetch** queues a job that bypasses the unchanged-fingerprint cache check. Feed and year force buttons enqueue only their configured months.
 
+## Proxy routing for refresh traffic
+
+Provider discovery and article PDF downloads use the proxy selected for the feed. The operator can set a global proxy at `/manage/settings` and override it per feed with **Inherit global settings**, **Connect directly**, or **Use a custom proxy**. Inherited feeds resolve a custom feed proxy first, then the global GUI setting, then `KPAPERS_PROXY_URL`, and finally connect directly. Direct mode bypasses both shared settings. Supported URLs are `http://host:port` and `socks5://host:port`, optionally with `user:password@` credentials. Proxy routing does not relax destination validation, redirect checks, timeouts, or response size limits.
+
 ## PDF extraction cache identity
 
 Cached extracted text is keyed by the source fingerprint, the `pdf_oxide` engine identity, and the processing revision. Consequently:
