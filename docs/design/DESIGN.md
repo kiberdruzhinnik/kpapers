@@ -131,10 +131,10 @@ Use the shared Option A shell with Settings active. Present global fetch proxy c
 
 ## Approved Feeds list and detail screens
 
-The current references were approved by the user on 2026-11-17. The feed list version 3 was previously approved on 2026-11-08; the earlier master-detail composition is superseded.
+The feed list version 3 was approved by the user on 2026-11-17; feed detail version 3 was approved on 2026-11-18. The earlier master-detail composition is superseded.
 
 - [Feed list, version 3](https://p.superdesign.dev/draft/f4af5ba3-6858-4482-bc91-62d3b825eee0), application route `/manage/feeds`.
-- [Feed detail, version 2](https://p.superdesign.dev/draft/d677b336-17bc-4d93-9e1c-aa98bf9b6974), application route `/manage/feeds/:feedId`.
+- [Feed detail, version 3](https://p.superdesign.dev/draft/d677b336-17bc-4d93-9e1c-aa98bf9b6974), application route `/manage/feeds/:feedId`.
 
 ### Feed list
 
@@ -144,10 +144,10 @@ Use a single list surface with restrained rows showing feed name, short descript
 
 Show All feeds as a back link, feed title/description and status, Edit details, and a compact More actions control. Put the stable RSS address with Copy link in a concise surface. Keep feed identity stable across edits and archive/restore.
 
-Source folders appears as one clear section with Add year and simple year rows. Years start collapsed unless a stored preference explicitly expands them. Expanding a year reveals month rows; Connect month opens a focused form instead of exposing fields permanently. Month rows show the month, a concise state, Manage source and Review PDFs. Manage source reveals the folder URL, last attempt, next refresh, latest result and scoped actions. Keep feed/year/month refresh, archive, restore and permanent deletion available with their existing scope and confirmations; distinguish destructive actions in menus/dialogs.
+Source folders appears as one clear section with Add year and compact, independently collapsible year groups. Years start collapsed unless a stored preference explicitly expands them. Expanding a year reveals concise month rows; Connect month opens a focused form instead of exposing fields permanently. Month rows show the month, active/archive state, latest result, Source details, and Review PDFs. Source details reveals the folder URL, last attempt, next refresh, latest result or error, and scoped actions. Keep feed/year/month refresh, archive, restore and permanent deletion available with their existing scope and confirmations; distinguish destructive actions in menus/dialogs.
 
 Use focused dialogs/disclosures for Add year, Connect month and Edit details. Preserve existing field validation and server outcomes. Menus and dialogs must support keyboard navigation, Escape, labelled controls, focus containment/restoration and visible focus. In production, prefer existing shadcn/ui primitives over prototype native dialogs or generic details-based menus. On mobile, wrap actions, stack groups and retain 44px targets without horizontal overflow.
 
 ### Design handoff status
 
-Overview, Feeds list, feed detail, Create a feed, PDF review and Settings are approved as visual references. Current implementation targets are Feeds list v3, Feed detail v2, PDF review v3 and Settings v4. Sample records, preview URLs and preview storage keys are illustrative; implementation uses actual data, application routes and existing preferences. Superdesign has no approval-status command, so approval is recorded here and in `.superdesign/resume.json`. Production code is unchanged. Approval does not claim complete prototype interactions or rendered browser verification.
+Overview, Feeds list, feed detail, Create a feed, PDF review and Settings are approved as visual references. Current implementation targets are Feeds list v3, Feed detail v3, PDF review v3 and Settings v4. Sample records, preview URLs and preview storage keys are illustrative; implementation uses actual data, application routes and existing preferences. Superdesign has no approval-status command, so approval is recorded here and in `.superdesign/resume.json`. The prototype is not the production interaction contract, and its approval does not claim rendered browser verification.

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { api, type Month } from "@/lib/api"
@@ -80,6 +80,51 @@ describe("feed year expansion", () => {
     expect(screen.getByRole("button", { name: "Collapse 2026" })).toHaveAttribute("aria-expanded", "true")
     await user.click(screen.getByRole("button", { name: "Collapse 2026" }))
     expect(screen.getByRole("button", { name: "Expand 2026" })).toHaveAttribute("aria-expanded", "false")
+  })
+})
+
+describe("month source details", () => {
+  it("keeps the month summary scannable and discloses its source, refresh state, and scoped actions", async () => {
+    const user = userEvent.setup()
+    render(<HierarchyManagement {...props} />)
+    await user.click(await screen.findByRole("button", { name: "Expand 2026" }))
+
+    const yearContent = within(document.getElementById("year-content-feed-1-2026")!)
+    const monthRow = yearContent.getByRole("article")
+    expect(within(monthRow).getByRole("heading", { name: "November" })).toBeVisible()
+    expect(within(monthRow).getByText("Not refreshed")).toBeVisible()
+    expect(within(monthRow).getByRole("button", { name: "Review PDFs" })).toBeVisible()
+    const disclosure = within(monthRow).getByRole("button", { name: "Show source details for November" })
+    expect(disclosure).toHaveAttribute("aria-expanded", "false")
+    expect(document.getElementById(disclosure.getAttribute("aria-controls")!)).not.toBeVisible()
+
+    await user.click(disclosure)
+    expect(within(monthRow).getByRole("button", { name: "Hide source details for November" })).toHaveAttribute("aria-expanded", "true")
+    expect(within(monthRow).getByRole("link", { name: month.source_url })).toBeVisible()
+    expect(within(monthRow).getByText("Never")).toBeVisible()
+    expect(within(monthRow).getByText("Pending")).toBeVisible()
+    expect(within(monthRow).getByText("Not run yet")).toBeVisible()
+    expect(within(monthRow).getByRole("button", { name: "Fetch and parse" })).toBeVisible()
+    expect(within(monthRow).getByRole("button", { name: "Refresh now" })).toBeVisible()
+    expect(within(monthRow).getByRole("button", { name: "Archive" })).toBeVisible()
+    expect(within(monthRow).getByRole("button", { name: "Delete permanently" })).toBeVisible()
+  })
+
+  it("shows a failed refresh and its error in the disclosed details", async () => {
+    vi.mocked(api.months).mockResolvedValue([{
+      ...month,
+      last_attempt_at: "2026-11-18T09:35:24Z",
+      next_refresh_at: "2026-11-18T10:35:22Z",
+      last_result: "failure",
+      last_error: "Folder unavailable",
+    }])
+    const user = userEvent.setup()
+    render(<HierarchyManagement {...props} />)
+    await user.click(await screen.findByRole("button", { name: "Expand 2026" }))
+    const monthRow = within(document.getElementById("year-content-feed-1-2026")!).getByRole("article")
+    expect(within(monthRow).getByText("failure")).toBeVisible()
+    await user.click(within(monthRow).getByRole("button", { name: "Show source details for November" }))
+    expect(within(monthRow).getByText("Failed · Folder unavailable")).toBeVisible()
   })
 })
 

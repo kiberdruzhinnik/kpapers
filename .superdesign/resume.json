@@ -37,19 +37,19 @@
       "components": [],
       "drafts": {
         "4e0398a1-0802-4ffd-8e2c-0cc23352afb8": {
-          "title": "Current Overview — Baseline",
+          "title": "Current Overview \u2014 Baseline",
           "visualDirection": "Existing neutral shadcn baseline",
           "currentVersion": 1
         },
         "0d73a8e3-facf-4122-b8e2-a561e1812e08": {
-          "title": "Option A — Operator Overview",
+          "title": "Option A \u2014 Operator Overview",
           "visualDirection": "Compact metrics and workflow/review split",
           "parentDraftId": "4e0398a1-0802-4ffd-8e2c-0cc23352afb8",
           "currentVersion": 2,
           "approvalStatus": "approved"
         },
         "9ec0f56b-b208-4d96-9a97-23fd38ded681": {
-          "title": "Option B — Publishing Workspace",
+          "title": "Option B \u2014 Publishing Workspace",
           "visualDirection": "Divided summary strip and spacious workflow cards",
           "parentDraftId": "4e0398a1-0802-4ffd-8e2c-0cc23352afb8",
           "currentVersion": 2,
@@ -112,7 +112,7 @@
       "sourceDraftId": "0d73a8e3-facf-4122-b8e2-a561e1812e08",
       "drafts": {
         "f4af5ba3-6858-4482-bc91-62d3b825eee0": {
-          "title": "Feeds — Option A",
+          "title": "Feeds \u2014 Option A",
           "visualDirection": "Simple feed list with separate detail screen",
           "parentDraftId": "0d73a8e3-facf-4122-b8e2-a561e1812e08",
           "currentVersion": 3,
@@ -176,7 +176,7 @@
       "sourceDraftId": "0d73a8e3-facf-4122-b8e2-a561e1812e08",
       "drafts": {
         "a954b48e-cb39-4fab-947c-4279ee701efe": {
-          "title": "Create a feed — Option A",
+          "title": "Create a feed \u2014 Option A",
           "visualDirection": "Approved Option A extended to Create a feed",
           "parentDraftId": "0d73a8e3-facf-4122-b8e2-a561e1812e08",
           "currentVersion": 2,
@@ -263,6 +263,7 @@
         "web/src/App.tsx:176:245",
         "web/src/index.css",
         "web/src/components/feeds/FeedManagement.tsx:112:212",
+        "web/src/components/feeds/HierarchyManagement.tsx",
         "web/src/components/feeds/FeedProxySettings.tsx",
         "web/src/components/settings/ProxySettings.tsx",
         "web/src/components/ui/button.tsx",
@@ -273,17 +274,18 @@
       ],
       "fingerprints": {
         ".superdesign/design-system.md": "b01285b08d051cbadf96818b1450c38827148f9ff1f196e72651cd8f3cc61e10",
-        "docs/design/DESIGN.md": "619fb2f9a160b8fba0ade6d88dcf0933d9d84c000143fb03d4e0083b4ce8734e",
+        "docs/design/DESIGN.md": "3cd0be8cfcfad57ef989c4d7d6129de12b03f2b192646a5de27901b6f03d2b9e",
         "web/src/App.tsx": "8d575f6811fa43d5a88279ce5f3a0a21f9da25abc87fce97ccd5eadcf3c2cf92",
         "web/src/index.css": "f92c150fb4f7aa4a6d77c78d9a06424a387dd205f53da4dbcb33e85aa864c05f",
-        "web/src/components/feeds/FeedManagement.tsx": "c7a952c494a4a98747bd0e16b3000a7e1c3ed428bb88737afcfd09608404e7f7",
+        "web/src/components/feeds/FeedManagement.tsx": "bf5d70e11632f7feb66b14fcd53c8541709bde140a41e4a533111a8e83f68d34",
         "web/src/components/feeds/FeedProxySettings.tsx": "539d68a94e5f384b16a52b03f64771486fe7cd0a61166565497c7c0e9194111f",
-        "web/src/components/settings/ProxySettings.tsx": "8d7db775d9aa4c63a1bf73effd9bb19d76cb6fa82ff87eb18e1af0d5b6973ec1",
+        "web/src/components/settings/ProxySettings.tsx": "d0d213f942cf99ca8c10d1a59d1103c0318eb7f41d402ae7cf6622bd5dee1435",
         "web/src/components/ui/button.tsx": "67a48d41d8b00177aaf021bd874216879ea8d923fecb8a97d2e39b1ce4faec50",
         "web/src/components/ui/card.tsx": "ec362cf1f8dbc5b419a56290dbfd42f80472e4d72883e9667c1540842d1bb12a",
         "web/src/components/ui/field.tsx": "8e54d2838051eeb741f6925863b690c98928b25bbb26f3cd26a5b75121d06acb",
         "web/src/components/ui/input.tsx": "a3fb4740b12a705cc86250a9516da5b54425174d3b008980bc7a3c31c8394832",
-        "web/src/components/ui/alert.tsx": "f253568242c1c69b343f12474002fdbe229f603158171c59e21c491ab79f2e6e"
+        "web/src/components/ui/alert.tsx": "f253568242c1c69b343f12474002fdbe229f603158171c59e21c491ab79f2e6e",
+        "web/src/components/feeds/HierarchyManagement.tsx": "c5a95e68a4d4ac13f578a1115533338148ff38721bc12c88649e65ebe0166128"
       },
       "referenceIds": [],
       "components": [],
@@ -291,15 +293,13 @@
       "sourceDraftId": "f4af5ba3-6858-4482-bc91-62d3b825eee0",
       "drafts": {
         "d677b336-17bc-4d93-9e1c-aa98bf9b6974": {
-          "title": "Feed Detail with Proxy Settings",
-          "visualDirection": "Approved feed detail with compact per-feed proxy controls",
+          "title": "Refined Feed Detail Source Folders",
+          "visualDirection": "Approved feed detail with compact year groups and scannable month rows",
           "parentDraftId": "0d73a8e3-facf-4122-b8e2-a561e1812e08",
-          "currentVersion": 2,
-          "approvalStatus": "approved",
-          "approvalDate": "2026-11-17"
+          "currentVersion": 3
         }
       },
-      "updatedAt": "2026-11-17T19:59:03.006437+00:00",
+      "updatedAt": "2026-11-18T07:15:21.667848+00:00",
       "approvedDesignRulesPath": "docs/design/DESIGN.md"
     },
     "/manage/settings": {
