@@ -96,7 +96,7 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page.getByRole("combobox", { name: "Month" })).toHaveValue(createdMonth.id)
   const alphaRow = page.locator("article").filter({ hasText: "article-alpha.pdf" })
   await expect(alphaRow).toContainText("Extraction success", { timeout: 30_000 })
-  const decision = alphaRow.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })
+  let decision = alphaRow.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })
   const saveDecision = async (value: string) => {
     const saved = page.waitForResponse((response) => response.url().endsWith("/promotion") && response.request().method() === "PUT")
     await decision.selectOption(value)
@@ -119,8 +119,14 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page).toHaveURL(new RegExp(`/manage/pdf-review/${createdFeed.id}/2026/${createdMonth.id}$`))
   const documents = await (await reloadedDocuments).json() as { filename: string; promotional_override: string | null }[]
   expect(documents.find((document) => document.filename === "article-alpha.pdf")?.promotional_override).toBe("exclude")
+  const persistedDocumentsResponse = page.waitForResponse((response) => response.url().endsWith(`/months/${createdMonth.id}/documents`) && response.request().method() === "GET")
   await page.reload()
-  await expect(page.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })).toHaveValue("exclude")
+  const persistedDocuments = await (await persistedDocumentsResponse).json() as { filename: string; promotional_override: string | null }[]
+  expect(persistedDocuments.find((document) => document.filename === "article-alpha.pdf")?.promotional_override).toBe("exclude")
+  const persistedAlphaRow = page.locator("article").filter({ hasText: "article-alpha.pdf" })
+  await expect(persistedAlphaRow).toBeVisible({ timeout: 30_000 })
+  decision = persistedAlphaRow.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })
+  await expect(decision).toHaveValue("exclude")
   await saveDecision("include")
   await expect(page.getByText("Publication decision saved").first()).toBeVisible()
   await saveDecision("automatic")
