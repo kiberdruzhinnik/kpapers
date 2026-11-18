@@ -156,6 +156,8 @@ describe("operator session and dashboard shell", () => {
     render(<App />)
 
     expect(await screen.findByRole("heading", { name: "Global fetch proxy" })).toBeInTheDocument()
+    expect(screen.getByRole("heading", { name: "Routing precedence" })).toBeInTheDocument()
+    expect(screen.getByText("Environment fallback")).toBeInTheDocument()
     expect(window.location.pathname).toBe("/manage/settings")
     expect(await screen.findByTestId("global-proxy-status")).toHaveTextContent("No global GUI proxy is configured.")
     await user.type(screen.getByLabelText("Proxy URL"), "ftp://proxy.example:21")
@@ -174,6 +176,19 @@ describe("operator session and dashboard shell", () => {
 
     await user.click(screen.getByRole("button", { name: "Clear global proxy" }))
     expect(await screen.findByText("No global GUI proxy is configured.")).toBeInTheDocument()
+  })
+
+  it("shows a request error when global proxy settings cannot be loaded", async () => {
+    const fetchMock = installApi(true)
+    const defaultFetch = fetchMock.getMockImplementation()
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === "/api/management/settings/proxy" && (init?.method ?? "GET") === "GET") return response({ error: "Settings unavailable" }, 503)
+      return defaultFetch!(input, init)
+    })
+    window.history.replaceState({}, "", "/manage/settings")
+    render(<App />)
+
+    expect(await screen.findByTestId("proxy-settings-error")).toHaveTextContent("could not complete that request")
   })
 
   it("does not expose settings to an unauthenticated visitor", async () => {

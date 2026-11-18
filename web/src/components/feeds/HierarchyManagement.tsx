@@ -326,17 +326,17 @@ export function HierarchyManagement({ feedId, active, onReviewMonth }: {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-base font-semibold">Source folders</h2><p className="mt-1 text-sm text-muted-foreground">Organize documents by year and connect the months you publish.</p></div>
+    <Card className="min-w-0">
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4"><div><CardTitle as="h2" className="text-base">Source folders</CardTitle><CardDescription className="mt-1">Organize documents by year and connect the months you publish.</CardDescription></div>
         <Dialog open={adding} onOpenChange={setAdding}><DialogTrigger asChild><Button disabled={!active} variant="outline"><FolderPlus aria-hidden="true" data-icon="inline-start" />Add year</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Add year</DialogTitle><DialogDescription>Create a year before connecting its source folders.</DialogDescription></DialogHeader>
           <form className="flex flex-col gap-4" onSubmit={(event) => void createYear(event)}><FieldGroup><Field><FieldLabel htmlFor={`new-year-${feedId}`}>Add a year</FieldLabel><Input id={`new-year-${feedId}`} min="1" max="9999" onChange={(event) => setYearValue(event.target.value)} placeholder="e.g. 2026" required type="number" value={yearValue} /></Field></FieldGroup>{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><Button onClick={() => setAdding(false)} type="button" variant="outline">Cancel</Button><Button disabled={pending} type="submit">{pending ? "Adding…" : "Add year"}</Button></div></form>
         </DialogContent></Dialog>
-      </div>
-      <div className="flex flex-col gap-4">
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
         {years.map((year) => <YearCard key={`${feedId}-${year.year}`} feedId={feedId} onChanged={reloadYears} onReview={onReviewMonth} year={year} />)}
         {years.length === 0 && !loading && <Empty><EmptyHeader><EmptyTitle>No years configured</EmptyTitle><EmptyDescription>Add a year to start linking source folders.</EmptyDescription></EmptyHeader></Empty>}
         {loading && <div aria-label="Loading years" className="rounded-xl border bg-background px-6 py-8 text-center text-sm text-muted-foreground">Loading years…</div>}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }

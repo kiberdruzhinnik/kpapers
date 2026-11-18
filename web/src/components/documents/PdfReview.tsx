@@ -163,27 +163,27 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, o
   const queueDocuments = activeQueueResult?.documents ?? []
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <Button aria-label="Back to feeds" onClick={onBack} size="icon" variant="outline"><ArrowLeft aria-hidden="true" /></Button>
-          <div><h1>PDF review</h1><p className="mt-1 text-sm text-muted-foreground">Review extracted content and choose which documents appear in the feed.</p></div>
+    <div className="flex min-w-0 flex-col gap-6">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <Button aria-label="Back to feeds" className="mt-0.5 size-9 shrink-0 rounded-lg" onClick={onBack} size="icon" variant="outline"><ArrowLeft aria-hidden="true" /></Button>
+          <div className="min-w-0"><h1 className="text-2xl font-semibold tracking-tight">PDF review</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Manage publication decisions for extracted documents across your feeds.</p></div>
         </div>
         {!initialQueueMode && selectedFeed && year !== null && selectedMonth && <Badge className="h-auto max-w-full min-w-0 whitespace-normal break-words" variant="outline">{selectedFeed.display_name} · {year} · {monthNames[selectedMonth.month - 1] ?? `Month ${selectedMonth.month}`}</Badge>}
       </div>
 
-      <div aria-label="PDF review filters" className="flex flex-wrap gap-2" role="group">
-        <Button aria-pressed={initialQueueMode === "needs-review"} onClick={() => onQueueModeChange("needs-review")} variant={initialQueueMode === "needs-review" ? "default" : "outline"}>Needs review</Button>
-        <Button aria-pressed={initialQueueMode === "archived"} onClick={() => onQueueModeChange("archived")} variant={initialQueueMode === "archived" ? "default" : "outline"}>Archived</Button>
-        <Button aria-pressed={!initialQueueMode} onClick={() => onQueueModeChange(null)} variant={!initialQueueMode ? "default" : "outline"}>Browse by source</Button>
+      <div aria-label="PDF review filters" className="flex min-w-0 flex-wrap gap-x-1 border-b" role="group">
+        <Button aria-pressed={initialQueueMode === "needs-review"} className={`h-10 rounded-none border-b-2 px-4 text-sm transition-colors ${initialQueueMode === "needs-review" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => onQueueModeChange("needs-review")} variant="ghost">Needs review</Button>
+        <Button aria-pressed={initialQueueMode === "archived"} className={`h-10 rounded-none border-b-2 px-4 text-sm transition-colors ${initialQueueMode === "archived" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => onQueueModeChange("archived")} variant="ghost">Archived</Button>
+        <Button aria-pressed={!initialQueueMode} className={`h-10 rounded-none border-b-2 px-4 text-sm transition-colors ${!initialQueueMode ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => onQueueModeChange(null)} variant="ghost">Browse by source</Button>
       </div>
 
       {initialQueueMode ? <Card>
-        <CardHeader>
+        <CardHeader className="gap-1 border-b pb-4">
           <CardTitle>{initialQueueMode === "archived" ? "Archived documents needing attention" : "Documents needing attention"}</CardTitle>
           <CardDescription>{initialQueueMode === "archived" ? "These documents belong to an archived feed, year, or month." : "Documents across active feeds, years, and months that need your decision."}</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
+        <CardContent className="flex min-w-0 flex-col gap-3 p-4 sm:p-5">
           {queueLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading documents…</p>}
           {queueError && <Alert variant="destructive"><AlertDescription>{queueError}</AlertDescription></Alert>}
           {!queueLoading && !queueError && queueDocuments.length === 0 && <Empty><EmptyHeader><EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia><EmptyTitle>No documents need attention</EmptyTitle><EmptyDescription>This review queue is empty.</EmptyDescription></EmptyHeader></Empty>}
@@ -191,22 +191,22 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, o
         </CardContent>
       </Card> : <>
         <Card>
-          <CardHeader><CardTitle>Choose a source</CardTitle><CardDescription>Browse discovered documents by feed, year, and month.</CardDescription></CardHeader>
-          <CardContent><FieldGroup className="grid gap-4 sm:grid-cols-3">
+          <CardHeader className="gap-1 pb-4"><CardTitle>Choose a source</CardTitle><CardDescription>Browse discovered documents by feed, year, and month.</CardDescription></CardHeader>
+          <CardContent className="pb-5"><FieldGroup className="grid min-w-0 gap-4 sm:grid-cols-3">
             <Field><FieldLabel htmlFor="review-feed">Feed</FieldLabel>
-              <select id="review-feed" aria-label="Feed" className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" onChange={(event) => { const nextFeedId = event.target.value; setFeedId(nextFeedId); setYear(null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextFeedId ? { feedId: nextFeedId } : null) }} value={feedId}>
+              <select id="review-feed" aria-label="Feed" className="h-10 min-w-0 w-full rounded-lg border border-input bg-background px-3 text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => { const nextFeedId = event.target.value; setFeedId(nextFeedId); setYear(null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextFeedId ? { feedId: nextFeedId } : null) }} value={feedId}>
                 <option value="">Choose a feed</option>
                 {feeds.map((feed) => <option key={feed.id} value={feed.id}>{feed.display_name}</option>)}
               </select>
             </Field>
             <Field><FieldLabel htmlFor="review-year">Year</FieldLabel>
-              <select id="review-year" aria-label="Year" className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={!feedId || hierarchyLoading} onChange={(event) => { const nextYear = event.target.value ? Number(event.target.value) : undefined; setYear(nextYear ?? null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextYear === undefined ? { feedId } : { feedId, year: nextYear }) }} value={year ?? ""}>
+              <select id="review-year" aria-label="Year" className="h-10 min-w-0 w-full rounded-lg border border-input bg-background px-3 text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring" disabled={!feedId || hierarchyLoading} onChange={(event) => { const nextYear = event.target.value ? Number(event.target.value) : undefined; setYear(nextYear ?? null); setMonthId(""); setDocuments([]); setLoadError(null); setHierarchyLoading(true); setLoading(false); onSelectionChange?.(nextYear === undefined ? { feedId } : { feedId, year: nextYear }) }} value={year ?? ""}>
                 <option value="">{hierarchyLoading ? "Loading years…" : "Choose a year"}</option>
                 {years.map((item) => <option key={item.year} value={item.year}>{item.year}</option>)}
               </select>
             </Field>
             <Field><FieldLabel htmlFor="review-month">Month</FieldLabel>
-              <select id="review-month" aria-label="Month" className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm font-normal" disabled={year === null || hierarchyLoading} onChange={(event) => { const nextMonthId = event.target.value; setMonthId(nextMonthId); setDocuments([]); setLoadError(null); setLoading(Boolean(nextMonthId)); onSelectionChange?.(nextMonthId ? { feedId, year: year!, monthId: nextMonthId } : { feedId, year: year! }) }} value={monthId}>
+              <select id="review-month" aria-label="Month" className="h-10 min-w-0 w-full rounded-lg border border-input bg-background px-3 text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring" disabled={year === null || hierarchyLoading} onChange={(event) => { const nextMonthId = event.target.value; setMonthId(nextMonthId); setDocuments([]); setLoadError(null); setLoading(Boolean(nextMonthId)); onSelectionChange?.(nextMonthId ? { feedId, year: year!, monthId: nextMonthId } : { feedId, year: year! }) }} value={monthId}>
                 <option value="">{hierarchyLoading ? "Loading months…" : "Choose a month"}</option>
                 {months.map((item) => <option key={item.id} value={item.id}>{monthNames[item.month - 1] ?? `Month ${item.month}`}</option>)}
               </select>
@@ -214,9 +214,9 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, o
           </FieldGroup></CardContent>
         </Card>
         {!monthId ? <Card><CardContent className="py-12 text-center"><FileText className="mx-auto size-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{hierarchyLoading ? "Loading source folders…" : "Choose a month to review its PDFs"}</p></CardContent></Card>
-          : <Card>
-            <CardHeader><CardTitle>Discovered PDFs</CardTitle><CardDescription>Publication overrides take precedence over automatic promotion classification.</CardDescription></CardHeader>
-            <CardContent className="flex flex-col gap-3">
+          : <Card className="min-w-0 border-0 bg-transparent shadow-none">
+            <CardHeader className="px-0 pb-3"><CardTitle>Discovered PDFs</CardTitle><CardDescription>Publication overrides take precedence over automatic promotion classification.</CardDescription></CardHeader>
+            <CardContent className="flex min-w-0 flex-col gap-3 px-0">
               {loading && <p className="py-8 text-center text-sm text-muted-foreground">Loading documents…</p>}
               {loadError && <Alert variant="destructive"><AlertDescription>{loadError}</AlertDescription></Alert>}
               {!loading && !loadError && documents.length === 0 && <Empty><EmptyHeader><EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia><EmptyTitle>No PDFs found</EmptyTitle><EmptyDescription>Scan this folder from feed management to discover documents.</EmptyDescription></EmptyHeader></Empty>}
@@ -231,16 +231,24 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, o
     const classification = document.promotional_classification
     const status = document.extraction_status.toLowerCase()
     const queueDocument = "feed_name" in document ? document : null
-    return <article className="grid min-w-0 gap-4 rounded-xl border p-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,0.55fr)] lg:items-center" key={document.id}>
+    return <article className={`grid min-w-0 gap-5 rounded-xl border p-4 transition-colors sm:p-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center ${status === "failure" ? "border-red-200 bg-red-50/70 hover:border-red-300" : "border-border bg-card hover:border-primary/30"}`} key={document.id}>
       <div className="min-w-0">
-        <div className="flex min-w-0 items-start gap-3"><div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileText aria-hidden="true" className="size-4" /></div><div className="min-w-0 flex-1"><h2 className="break-words text-sm font-medium">{document.filename}</h2><div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant={status === "success" ? "secondary" : status === "failure" ? "destructive" : "outline"}>Extraction {document.extraction_status}</Badge><Badge variant={classification === "publish" ? "secondary" : "outline"}>{classificationLabel[classification] ?? classification}</Badge></div></div></div>
-        {queueDocument && <p className="ml-12 mt-2 text-xs text-muted-foreground">{queueDocument.feed_name} · {queueDocument.year} · {monthNames[queueDocument.month - 1] ?? `Month ${queueDocument.month}`}</p>}
+        <div className="flex min-w-0 items-start gap-3"><div className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${status === "failure" ? "bg-red-100 text-destructive" : "bg-muted text-muted-foreground"}`}><FileText aria-hidden="true" className="size-4" /></div><div className="min-w-0 flex-1"><h2 className="break-words text-sm font-semibold tracking-tight">{document.filename}</h2><div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant={status === "success" ? "success" : status === "failure" ? "destructive" : "outline"}>Extraction {document.extraction_status}</Badge><Badge variant={classification === "publish" ? "secondary" : "outline"}>{classificationLabel[classification] ?? classification}</Badge></div></div></div>
+        {queueDocument && <p className="ml-12 mt-2 break-words text-xs text-muted-foreground">{queueDocument.feed_name} · {queueDocument.year} · {monthNames[queueDocument.month - 1] ?? `Month ${queueDocument.month}`}</p>}
         {document.last_error && <p className="ml-12 mt-2 break-words text-xs text-destructive">{document.last_error}</p>}
-        {!archived && <a className="ml-12 mt-2 inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline" href={api.documentSourceUrl(document.id)} rel="noreferrer" target="_blank">View source PDF <ExternalLink aria-hidden="true" className="size-3" /></a>}
-        {status !== "success" && !archived && <Button className="ml-9 mt-2" disabled={retryingIds.has(document.id)} onClick={() => void retryExtraction(document)} size="sm" variant="ghost"><RefreshCw aria-hidden="true" />{retryingIds.has(document.id) ? "Extracting…" : "Retry extraction"}</Button>}
-        {archived && <p className="ml-12 mt-2 text-xs text-muted-foreground">Restore this archived source to open its PDF or retry extraction.</p>}
+        <div className="ml-12 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+          {!archived && <a className="inline-flex min-h-8 items-center gap-1.5 text-xs font-medium text-primary underline-offset-4 hover:underline" href={api.documentSourceUrl(document.id)} rel="noreferrer" target="_blank">View source PDF <ExternalLink aria-hidden="true" className="size-3" /></a>}
+          {status !== "success" && !archived && <Button className="h-8 px-2" disabled={retryingIds.has(document.id)} onClick={() => void retryExtraction(document)} size="sm" variant="ghost"><RefreshCw aria-hidden="true" />{retryingIds.has(document.id) ? "Extracting…" : "Retry extraction"}</Button>}
+        </div>
+        {archived && <p className="ml-12 mt-3 text-xs text-muted-foreground">Restore this archived source to open its PDF or retry extraction.</p>}
       </div>
-      <div className="flex flex-col gap-1.5"><label className="text-sm font-medium" htmlFor={`decision-${document.id}`}>Publication decision</label><select aria-label={`Publication decision for ${document.filename}`} className="h-9 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled={savingIds.has(document.id)} id={`decision-${document.id}`} onChange={(event) => void changeDecision(document, event.target.value)} value={document.promotional_override ?? "automatic"}><option value="automatic">Automatic · {classificationLabel[document.promotional_classification] ?? document.promotional_classification}</option><option value="include">Include in feed</option><option value="exclude">Exclude from feed</option></select>{status !== "success" && <p className="text-xs text-muted-foreground">Successful extraction is required before this PDF can appear in the feed.</p>}{savingIds.has(document.id) && <p role="status" className="text-xs text-muted-foreground">Saving decision…</p>}{saveErrors[document.id] && <p className="text-xs text-destructive" role="alert">{saveErrors[document.id]}</p>}</div>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground" htmlFor={`decision-${document.id}`}>Publication decision</label>
+        <select aria-label={`Publication decision for ${document.filename}`} className="h-10 min-w-0 w-full rounded-lg border border-input bg-background px-3 text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring" disabled={savingIds.has(document.id)} id={`decision-${document.id}`} onChange={(event) => void changeDecision(document, event.target.value)} value={document.promotional_override ?? "automatic"}><option value="automatic">Automatic · {classificationLabel[document.promotional_classification] ?? document.promotional_classification}</option><option value="include">Include in feed</option><option value="exclude">Exclude from feed</option></select>
+        {status !== "success" && <p className="text-xs text-muted-foreground">Successful extraction is required before this PDF can appear in the feed.</p>}
+        {savingIds.has(document.id) && <p role="status" className="text-xs text-muted-foreground">Saving decision…</p>}
+        {saveErrors[document.id] && <p className="text-xs text-destructive" role="alert">{saveErrors[document.id]}</p>}
+      </div>
     </article>
   }
 }

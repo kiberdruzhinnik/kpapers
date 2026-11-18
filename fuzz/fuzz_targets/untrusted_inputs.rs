@@ -9,6 +9,8 @@ mod feed_api;
 mod pdf_processing;
 #[path = "../../src/providers/mod.rs"]
 mod providers;
+#[path = "../../src/proxy.rs"]
+mod proxy;
 #[path = "../../src/rss.rs"]
 mod rss;
 
