@@ -352,7 +352,7 @@ describe("feed management workflows", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds/feed-1/years/2026/months/1", expect.objectContaining({
       method: "PUT", body: JSON.stringify({ source_url: "https://disk.yandex.ru/example" }),
     }))
-    await user.click(screen.getByRole("button", { name: "Manage source" }))
+    await user.click(screen.getByRole("button", { name: "Show source details for January" }))
     await user.click(screen.getByRole("button", { name: "Refresh now" }))
     expect(await screen.findByText("January refresh queued")).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith("/api/management/months/month-jan/refresh", expect.objectContaining({ method: "POST" }))

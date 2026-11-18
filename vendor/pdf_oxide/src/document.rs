@@ -25360,7 +25360,7 @@ fn validate_root_loadable<R: Read + Seek>(
 fn has_standalone_obj_keyword(s: &str) -> bool {
     for (i, _) in s.match_indices("obj") {
         // Skip "endobj" — check if preceded by "end"
-        if i >= 3 && &s[i - 3..i] == "end" {
+        if i >= 3 && &s.as_bytes()[i - 3..i] == b"end" {
             continue;
         }
         // Must be at a word boundary: preceded by whitespace, digit, or start of string
@@ -25637,6 +25637,12 @@ fn find_substring(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn standalone_obj_keyword_handles_non_ascii_prefix() {
+        assert!(has_standalone_obj_keyword("\u{FFFD} obj"));
+        assert!(!has_standalone_obj_keyword("\u{FFFD}xobj"));
+    }
 
     /// Regression: `extract_spans().to_chars()` per-glyph x must track the
     /// accurate `extract_chars()` positions instead of drifting via the
