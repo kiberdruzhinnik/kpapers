@@ -70,10 +70,10 @@ test("operator manages a feed, source folder, publication decision, and account 
   await page.reload()
   await expect(page.getByRole("button", { name: "Collapse 2026" })).toHaveAttribute("aria-expanded", "true")
   await expect(page.getByRole("heading", { name: "November" })).toBeVisible()
-  const yearCard = page.locator("[data-slot='card-title']").filter({ hasText: "2026" }).locator("xpath=ancestor::*[@data-slot='card'][1]")
-  const monthCard = page.getByRole("heading", { name: "November" }).locator("xpath=ancestor::*[@data-slot='card'][1]")
+  const yearCard = page.getByRole("heading", { name: "2026" }).locator("xpath=ancestor::article[1]")
+  const monthCard = page.getByRole("heading", { name: "November" }).locator("xpath=ancestor::article[1]")
 
-  await monthCard.getByRole("button", { name: "Manage source" }).click()
+  await monthCard.getByRole("button", { name: "Show source details for November" }).click()
   await yearCard.getByRole("button", { name: "Actions for 2026" }).click()
   await page.getByRole("menuitem", { name: "Refresh year" }).click()
   await expect(page.getByText("2026 refresh queued")).toBeVisible()
@@ -127,7 +127,7 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page.getByText("Publication decision saved").first()).toBeVisible()
   await page.getByRole("button", { name: "Back to feeds" }).click()
 
-  await monthCard.getByRole("button", { name: "Manage source" }).click()
+  await monthCard.getByRole("button", { name: "Show source details for November" }).click()
   await monthCard.getByRole("button", { name: "Archive", exact: true }).click()
   await expect(page.getByRole("alertdialog")).toContainText("Archive November?")
   await page.getByRole("alertdialog").getByRole("button", { name: "Archive month" }).click()
