@@ -1574,6 +1574,13 @@ mod tests {
         assert!(extract_pdf(bytes, 2 * 1024 * 1024).is_err());
     }
 
+    #[test]
+    fn malformed_pdf_with_utf8_object_header_does_not_panic() {
+        let bytes = include_bytes!("../fuzz/corpus/pdf_bytes/utf8_obj_boundary_crash");
+
+        let _ = extract_pdf(bytes, 2 * 1024 * 1024);
+    }
+
     fn simple_pdf_pages(texts: &[&str]) -> Vec<u8> {
         let font_id = 3 + 2 * texts.len();
         let mut objects = vec![
