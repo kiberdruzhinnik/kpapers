@@ -79,16 +79,17 @@ export function ProxySettingsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1>Settings</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Configure the network route used when feeds discover PDFs and fetch article files.</p>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-7 sm:px-6 sm:py-8 lg:px-8">
+      <div className="max-w-3xl">
+        <h1 className="text-[28px] font-semibold leading-8 tracking-tight">Settings</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Configure the network route used to discover PDFs and fetch article files.</p>
       </div>
 
-      <Card className="max-w-3xl">
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle>Global fetch proxy</CardTitle>
-          <CardDescription>Feeds set to Inherit use this proxy, then the deployment environment fallback, then a direct connection. A feed can instead use its own proxy or connect directly.</CardDescription>
+          <CardDescription>Configure the network route used for PDF discovery and document retrieval.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
           {loading ? <p role="status" className="text-sm text-muted-foreground">Loading proxy settings…</p> : settings?.configured ? (
@@ -130,6 +131,29 @@ export function ProxySettingsPage() {
           </form>
         </CardContent>
       </Card>
+      <div className="flex flex-col gap-5">
+        <Card>
+          <CardHeader>
+            <CardTitle>Routing precedence</CardTitle>
+            <CardDescription>Feeds using Inherit follow this order.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ol className="flex flex-col gap-3 text-sm">
+              <li className="flex gap-3"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">1</span><span><span className="font-medium">Global GUI proxy</span><span className="mt-0.5 block text-muted-foreground">The proxy configured on this page.</span></span></li>
+              <li className="flex gap-3"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">2</span><span><span className="font-medium">Environment fallback</span><span className="mt-0.5 block text-muted-foreground"><code className="rounded bg-muted px-1 py-0.5 text-xs">KPAPERS_PROXY_URL</code>, when configured.</span></span></li>
+              <li className="flex gap-3"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">3</span><span><span className="font-medium">Direct connection</span><span className="mt-0.5 block text-muted-foreground">Used when no proxy is configured.</span></span></li>
+            </ol>
+            <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">A feed can override inheritance by using its own proxy or connecting directly.</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Credential handling</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">Saved proxy credentials are write-only. They are never returned to the browser or shown again. Enter a new URL to replace them.</CardContent>
+        </Card>
+      </div>
+      </div>
     </div>
   )
 }

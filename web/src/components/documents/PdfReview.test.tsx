@@ -87,6 +87,48 @@ describe("PDF review", () => {
     expect(decision).toHaveValue("automatic")
   })
 
+  it("shows queue loading and per-document save-pending feedback", async () => {
+    const fetchMock = installDocumentsApi()
+    const original = fetchMock.getMockImplementation()!
+    let resolveQueue!: (result: Response) => void
+    let resolveSave!: (result: Response) => void
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/management/review-queue?archived=false") return new Promise((resolve) => { resolveQueue = resolve })
+      if (String(input) === "/api/management/documents/doc-1/promotion" && init?.method === "PUT") return new Promise((resolve) => { resolveSave = resolve })
+      return original(input, init)
+    })
+    const user = userEvent.setup()
+    renderReview(null, "needs-review")
+
+    expect(await screen.findByText("Loading documents…")).toBeInTheDocument()
+    resolveQueue(response([{ ...document, feed_name: "Ada Lovelace", year: 2026, month: 11 }]))
+    const decision = await screen.findByRole("combobox", { name: "Publication decision for research-paper.pdf" })
+    await user.selectOptions(decision, "exclude")
+    expect(await screen.findByText("Saving decision…")).toBeInTheDocument()
+    expect(decision).toBeDisabled()
+    resolveSave(response(null, 204))
+    await waitFor(() => expect(decision).toHaveValue("exclude"))
+  })
+
+  it("reports review queue load errors and keeps archived source actions unavailable", async () => {
+    const fetchMock = installDocumentsApi(false, [{ ...queuedDocument, archived: true }])
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/management/review-queue?archived=true") return Promise.resolve(response(null, 500))
+      return original(input, init)
+    })
+    const { unmount } = renderReview(null, "archived")
+    expect(await screen.findByRole("alert")).toHaveTextContent("Kpapers could not complete that request. Try again shortly.")
+    unmount()
+
+    installDocumentsApi(false, [{ ...queuedDocument, archived: true }])
+    renderReview(null, "archived")
+    expect(await screen.findByRole("heading", { name: "queued-paper.pdf" })).toBeInTheDocument()
+    expect(screen.getByText(/Restore this archived source/)).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "View source PDF" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Retry extraction" })).not.toBeInTheDocument()
+  })
+
   it("navigates by feed, year, and month and loads the selected month's documents", async () => {
     installDocumentsApi()
     const user = userEvent.setup()

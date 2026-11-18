@@ -119,16 +119,22 @@ Use the shared Option A shell with Feeds active and a Workspace / Feeds / Create
 
 ## Approved PDF review page
 
-Approved on 2026-11-08. [PDF review, version 2](https://p.superdesign.dev/draft/9ef922b6-59aa-4221-a321-b9bfffc130d4).
+The current design was approved on 2026-11-17. [PDF review, version 3](https://p.superdesign.dev/draft/9ef922b6-59aa-4221-a321-b9bfffc130d4) supersedes version 2 as the implementation reference.
 
-Use the shared Option A shell with PDF review active. Place labelled dependent Feed, Year and Month selectors above document cards and retain selection context and Back to feeds. Preserve partial/full review deep links. Each document shows filename, extraction state, classification, document-specific source link and a labelled publication decision: Automatic, Include in feed or Exclude from feed. Keep classification and override distinct. Failed extraction shows an error and Retry extraction; Include cannot bypass successful extraction. Show pending save/error feedback per row and retain prior choice after failure. Stack filters and actions on mobile; wrap filenames. Source links must identify individual documents, not folders. Prototype choices remain local and labelled as previews.
+Use the shared Option A shell with PDF review active. Keep Needs review, Archived and Browse by source modes easy to distinguish. In source-browsing mode, place labelled dependent Feed, Year and Month selectors above the discovered PDF list. Retain queue source context and partial/full review deep links. Each document row shows filename, extraction state, classification, document-specific source link and a labelled publication decision: Automatic, Include in feed or Exclude from feed. Keep classification and override distinct. Failed extraction shows an error and Retry extraction; Include cannot bypass successful extraction. Show pending save/error feedback per row and retain the prior choice after failure. Stack filters and actions on mobile; wrap filenames. Source links must identify individual documents, not folders. Prototype choices remain local and labelled as previews.
+
+## Approved Settings page
+
+Approved by the user on 2026-11-17. [Settings, version 4](https://p.superdesign.dev/draft/019c063d-9171-4d5e-a8cc-bb5cef44889d) is the implementation reference.
+
+Use the shared Option A shell with Settings active. Present global fetch proxy configuration and its current configured/unconfigured state in a focused panel, with credential-safe replacement and clear actions. Show routing precedence separately and in order: global GUI proxy, `KPAPERS_PROXY_URL` environment fallback, then direct connection. Explain that per-feed Custom and Direct modes override inherited routing. Keep saved credentials write-only and preserve validation and request feedback.
 
 ## Approved Feeds list and detail screens
 
-Approved on 2026-11-08 after the user reviewed the simplified revision and said “looks good”. The earlier master-detail composition is superseded.
+The current references were approved by the user on 2026-11-17. The feed list version 3 was previously approved on 2026-11-08; the earlier master-detail composition is superseded.
 
 - [Feed list, version 3](https://p.superdesign.dev/draft/f4af5ba3-6858-4482-bc91-62d3b825eee0), application route `/manage/feeds`.
-- [Feed detail, version 1](https://p.superdesign.dev/draft/d677b336-17bc-4d93-9e1c-aa98bf9b6974), application route `/manage/feeds/:feedId`.
+- [Feed detail, version 2](https://p.superdesign.dev/draft/d677b336-17bc-4d93-9e1c-aa98bf9b6974), application route `/manage/feeds/:feedId`.
 
 ### Feed list
 
@@ -144,4 +150,4 @@ Use focused dialogs/disclosures for Add year, Connect month and Edit details. Pr
 
 ### Design handoff status
 
-Overview, Feeds list, feed detail, Create a feed and PDF review are all approved as visual references. Sample records, preview URLs and preview storage keys are illustrative; implementation uses actual data, application routes and existing preferences. Production code is unchanged. Approval does not claim complete prototype interactions or rendered browser verification and does not authorize implementation by itself.
+Overview, Feeds list, feed detail, Create a feed, PDF review and Settings are approved as visual references. Current implementation targets are Feeds list v3, Feed detail v2, PDF review v3 and Settings v4. Sample records, preview URLs and preview storage keys are illustrative; implementation uses actual data, application routes and existing preferences. Superdesign has no approval-status command, so approval is recorded here and in `.superdesign/resume.json`. Production code is unchanged. Approval does not claim complete prototype interactions or rendered browser verification.
