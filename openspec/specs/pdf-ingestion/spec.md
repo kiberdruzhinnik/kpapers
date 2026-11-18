@@ -369,7 +369,7 @@ The system SHALL include the `pdf_oxide` engine identity and processing revision
 - **THEN** the cached entry remains available in RSS and the document's recovery state reflects the successful reuse
 
 ### Requirement: Preserve spacing and punctuation between extracted PDF words
-The system SHALL reconstruct readable text from extracted PDF words without inserting spaces that split compounds or separate punctuation from adjacent text, while preserving spaces between distinct words.
+The system SHALL reconstruct readable text from extracted PDF words without inserting spaces that split compounds or separate punctuation from adjacent text. It SHALL remove a discretionary line-ending hyphen when joining a lowercase continuation on the next visual line, while preserving spaces between distinct words.
 
 #### Scenario: Preserve hyphenated compounds
 - **WHEN** extracted PDF words form a hyphenated compound such as `поп-психологии`, `по-идиотски`, or `культурно-техническом`
@@ -378,6 +378,10 @@ The system SHALL reconstruct readable text from extracted PDF words without inse
 #### Scenario: Preserve a compound split at a visual line break
 - **WHEN** a visual line break separates a hyphenated word into a line ending such as `по-`, `чем-`, or `объяснения-` and a lowercase continuation such as `товарищески`, `нибудь`, or `мастерключа`
 - **THEN** extracted text and published HTML join each word without a space after its hyphen, as `по-товарищески`, `чем-нибудь`, and `объяснения-мастерключа`
+
+#### Scenario: Remove a discretionary line-ending hyphen
+- **WHEN** a visual line ends with `пристрасти-` or `неискушен-` and the next line begins with `лись` or `ными`
+- **THEN** extracted text and published HTML join the fragments as `пристрастились` and `неискушенными`, without a hyphen or space
 
 #### Scenario: Keep punctuation attached to adjacent text
 - **WHEN** extracted PDF words include punctuation such as a comma or closing guillemet

@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 20;
+const EXTRACTION_PIPELINE_REVISION: u32 = 21;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
@@ -581,27 +581,63 @@ fn push_line_separator(target: &mut Vec<StyledRun>, next_runs: &[StyledRun]) {
         .chars()
         .last()
         .is_some_and(char::is_whitespace);
+    let previous_bold = previous.bold;
+    let previous_italic = previous.italic;
     let next_has_space = next
         .and_then(|run| run.text.chars().next())
         .is_some_and(char::is_whitespace);
+    let next_bold = next.is_some_and(|run| run.bold);
+    let next_italic = next.is_some_and(|run| run.italic);
+    let previous_text = target
+        .iter()
+        .map(|run| run.text.as_str())
+        .collect::<String>();
+    let next_text = next_runs
+        .iter()
+        .map(|run| run.text.as_str())
+        .collect::<String>();
+    if hyphenated_line_continuation(&previous_text, &next_text) {
+        if discretionary_line_hyphen(&previous_text, &next_text) {
+            remove_line_ending_hyphen_from_runs(target);
+        }
+        return;
+    }
     if previous_has_space || next_has_space {
         return;
     }
-    if hyphenated_line_continuation(
-        &target
-            .iter()
-            .map(|run| run.text.as_str())
-            .collect::<String>(),
-        &next_runs
-            .iter()
-            .map(|run| run.text.as_str())
-            .collect::<String>(),
-    ) {
-        return;
-    }
-    let bold = next.is_some_and(|next| previous.bold && next.bold);
-    let italic = next.is_some_and(|next| previous.italic && next.italic);
+    let bold = previous_bold && next_bold;
+    let italic = previous_italic && next_italic;
     push_styled_char(target, ' ', bold, italic);
+}
+
+fn remove_line_ending_hyphen_from_runs(runs: &mut Vec<StyledRun>) {
+    if let Some(last) = runs.last_mut() {
+        let content_end = last.text.trim_end().len();
+        last.text.truncate(content_end);
+        if last
+            .text
+            .chars()
+            .next_back()
+            .is_some_and(|ch| matches!(ch, '-' | '‐' | '‑'))
+        {
+            last.text.pop();
+        }
+    }
+    while runs.last().is_some_and(|run| run.text.is_empty()) {
+        runs.pop();
+    }
+}
+
+fn remove_line_ending_hyphen(text: &mut String) {
+    let content_end = text.trim_end().len();
+    text.truncate(content_end);
+    if text
+        .chars()
+        .next_back()
+        .is_some_and(|ch| matches!(ch, '-' | '‐' | '‑'))
+    {
+        text.pop();
+    }
 }
 
 fn hyphenated_line_continuation(previous: &str, next: &str) -> bool {
@@ -615,6 +651,19 @@ fn hyphenated_line_continuation(previous: &str, next: &str) -> bool {
             .chars()
             .next()
             .is_some_and(char::is_lowercase)
+}
+
+fn discretionary_line_hyphen(previous: &str, next: &str) -> bool {
+    if !hyphenated_line_continuation(previous, next) {
+        return false;
+    }
+
+    let previous = previous.trim_end();
+    let next = next.trim_start();
+    // These established lexical compounds must retain their hyphen when wrapped.
+    !((previous.ends_with("по-") && next.starts_with("товарищески"))
+        || (previous.ends_with("чем-") && next.starts_with("нибудь"))
+        || (previous.ends_with("объяснения-") && next.starts_with("мастерключа")))
 }
 
 fn body_text_size(pages: &[Vec<StyledLine>]) -> f32 {
@@ -768,7 +817,11 @@ fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
             } else {
                 "\n\n"
             };
-            if !hyphenated_line_continuation(&previous.text(), &first.text()) {
+            if hyphenated_line_continuation(&previous.text(), &first.text()) {
+                if discretionary_line_hyphen(&previous.text(), &first.text()) {
+                    remove_line_ending_hyphen(&mut text);
+                }
+            } else {
                 text.push_str(separator);
             }
         }
@@ -778,14 +831,15 @@ fn pages_to_text(pages: &[Vec<StyledLine>]) -> String {
         for (index, line) in lines.iter().enumerate() {
             if index > 0 {
                 let previous = lines[index - 1];
-                let separator = if hyphenated_line_continuation(&previous.text(), &line.text()) {
-                    ""
+                if hyphenated_line_continuation(&previous.text(), &line.text()) {
+                    if discretionary_line_hyphen(&previous.text(), &line.text()) {
+                        remove_line_ending_hyphen(&mut text);
+                    }
                 } else if large_gap_starts_paragraph(previous, line) {
-                    "\n\n"
+                    text.push_str("\n\n");
                 } else {
-                    "\n"
-                };
-                text.push_str(separator);
+                    text.push('\n');
+                }
             }
             text.push_str(&line.text());
         }
@@ -1737,7 +1791,8 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v20:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v21:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v20:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v19:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v18:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v17:pdf_oxide:{source}"));
@@ -1976,7 +2031,7 @@ mod tests {
     }
 
     #[test]
-    fn joins_hyphenated_words_split_across_lines_in_text_and_html() {
+    fn preserves_compounds_split_across_lines_and_ordinary_wrapped_spaces() {
         let pages = vec![vec![
             line(
                 "В конце спича рассказчик предложил добавить ему и совместно, по-",
@@ -1988,13 +2043,55 @@ mod tests {
                 "нибудь нужным он занимался неизменно — в любую погоду.",
                 12.0,
             ),
+            line("В качестве объяснения-", 12.0),
+            line("мастерключа напечатана формула.", 12.0),
             line("Обычный перенос строки", 12.0),
             line("должен сохранить пробел.", 12.0),
         ]];
-        let expected = "В конце спича рассказчик предложил добавить ему и совместно, по-товарищески, приобрести и употребить беленькую. То есть, как бы героя ни кидало по жизни, чем-нибудь нужным он занимался неизменно — в любую погоду. Обычный перенос строки должен сохранить пробел.";
+        let expected = "В конце спича рассказчик предложил добавить ему и совместно, по-товарищески, приобрести и употребить беленькую. То есть, как бы героя ни кидало по жизни, чем-нибудь нужным он занимался неизменно — в любую погоду. В качестве объяснения-мастерключа напечатана формула. Обычный перенос строки должен сохранить пробел.";
 
         assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
         assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn removes_discretionary_hyphens_from_reported_line_endings_in_text_and_html() {
+        let extracted = finalize_pages(
+            vec![vec![
+                line_from_words(&[("пристрасти", 0.0, false), ("-", 0.0, false)]),
+                line_from_words(&[
+                    ("лись", 0.0, false),
+                    ("к", 4.0, false),
+                    ("портикам,", 4.0, false),
+                    ("термам", 4.0, false),
+                    ("и", 4.0, false),
+                    ("изысканным", 4.0, false),
+                    ("пиршествам.", 4.0, false),
+                ]),
+                line_from_words(&[("неискушен", 0.0, false), ("-", 0.0, false)]),
+                line_from_words(&[
+                    ("ными", 0.0, false),
+                    ("и", 4.0, false),
+                    ("простодушными,", 4.0, false),
+                    ("образованностью", 4.0, false),
+                    ("и", 4.0, false),
+                    ("просвещённостью.", 4.0, false),
+                ]),
+            ]],
+            1,
+        )
+        .unwrap();
+
+        for text in ["пристрастились", "неискушенными"] {
+            assert!(
+                extracted.full_text.contains(text),
+                "{}",
+                extracted.full_text
+            );
+            assert!(extracted.html.contains(text), "{}", extracted.html);
+        }
+        assert!(!extracted.full_text.contains("пристрасти-лись"));
+        assert!(!extracted.full_text.contains("неискушен-ными"));
     }
 
     #[test]
