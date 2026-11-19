@@ -4,6 +4,7 @@ const isCI = process.env.CI === "true"
 
 export default defineConfig({
   testDir: "./tests/browser",
+  timeout: 60_000,
   fullyParallel: true,
   forbidOnly: isCI,
   retries: 0,

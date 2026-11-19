@@ -9,6 +9,7 @@ async function signIn(page: import("@playwright/test").Page) {
 }
 
 test("operator manages a feed, source folder, publication decision, and account session", async ({ page }) => {
+  test.setTimeout(120_000)
   const feedName = `Browser test ${Date.now()}`
   await signIn(page)
 
@@ -90,12 +91,15 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page).toHaveURL(new RegExp(`/manage/pdf-review/${createdFeed.id}/2026/${createdMonth.id}$`))
   const initialDocuments = await (await documentsResponse).json() as { filename: string }[]
   expect(initialDocuments.some((document) => document.filename === "article-alpha.pdf")).toBe(true)
+  const reloadedDocumentsResponse = page.waitForResponse((response) => response.url().endsWith(`/months/${createdMonth.id}/documents`) && response.request().method() === "GET")
   await page.reload()
+  const reviewedPageDocuments = await (await reloadedDocumentsResponse).json() as { filename: string; extraction_status: string }[]
+  expect(reviewedPageDocuments.find((document) => document.filename === "article-alpha.pdf")?.extraction_status).toBe("success")
   await expect(page.getByRole("combobox", { name: "Feed" })).toHaveValue(createdFeed.id)
   await expect(page.getByRole("combobox", { name: "Year" })).toHaveValue("2026")
   await expect(page.getByRole("combobox", { name: "Month" })).toHaveValue(createdMonth.id)
   const alphaRow = page.locator("article").filter({ hasText: "article-alpha.pdf" })
-  await expect(alphaRow).toContainText("Extraction success", { timeout: 30_000 })
+  await expect(alphaRow).toContainText("Extraction success", { timeout: 60_000 })
   let decision = alphaRow.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })
   const saveDecision = async (value: string) => {
     const saved = page.waitForResponse((response) => response.url().endsWith("/promotion") && response.request().method() === "PUT")

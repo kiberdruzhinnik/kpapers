@@ -1,6 +1,6 @@
 # Refresh and cache operations
 
-The single API instance checks for due linked months every five seconds. By default it refreshes the current calendar month every hour and older months every 24 hours. Set `CURRENT_MONTH_REFRESH_SECONDS` and `OLDER_MONTH_REFRESH_SECONDS` to change those defaults. A feed-level interval override replaces both defaults for that feed; the operator sets it in hours on the feed detail screen. The current month is determined from the API server's UTC calendar.
+The single API instance checks for due linked months every five seconds and automatically refreshes only the configured month matching the API server's current UTC year and month. The current month refreshes every hour by default; set `CURRENT_MONTH_REFRESH_SECONDS` to change that interval. A feed-level interval override replaces the default for the current month of that feed; the operator sets it in hours on the feed detail screen. Older months are not refreshed automatically and have no next scheduled refresh, but remain available for manual **Fetch and parse** or **Force refetch**. When the API server's UTC calendar advances, the newly current configured month becomes eligible for automatic refresh.
 
 Each due or forced run is persisted in `refresh_jobs`. Month rows expose last attempt, next refresh, and the latest result in the operator view. **Fetch and parse** performs an immediate month scan; **Force refetch** queues a job that bypasses the unchanged-fingerprint cache check. Feed and year force buttons enqueue only their configured months.
 

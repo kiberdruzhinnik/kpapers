@@ -61,7 +61,6 @@ async fn schedule_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         pool,
         Utc::now(),
         env_seconds("CURRENT_MONTH_REFRESH_SECONDS", 3600),
-        env_seconds("OLDER_MONTH_REFRESH_SECONDS", 86400),
     )
     .await
 }
@@ -69,12 +68,21 @@ async fn schedule_due(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 async fn schedule_due_at(
     pool: &SqlitePool,
     now: DateTime<Utc>,
-    one_hour: i64,
-    older_interval: i64,
+    current_month_interval: i64,
 ) -> Result<(), sqlx::Error> {
     let months = sqlx::query_as::<_, DueMonth>("SELECT fm.id, fm.feed_id, fm.year, fm.month, f.refresh_interval_seconds AS override_seconds, fm.next_refresh_at FROM feed_months fm JOIN feeds f ON f.id=fm.feed_id JOIN feed_years fy ON fy.feed_id=fm.feed_id AND fy.year=fm.year WHERE f.active=1 AND fy.active=1 AND fm.active=1")
         .fetch_all(pool).await?;
     for month in months {
+        let current = month.year == now.year() as i64 && month.month == now.month() as i64;
+        if !current {
+            if month.next_refresh_at.is_some() {
+                sqlx::query("UPDATE feed_months SET next_refresh_at=NULL WHERE id=?")
+                    .bind(&month.id)
+                    .execute(pool)
+                    .await?;
+            }
+            continue;
+        }
         let next_due = month
             .next_refresh_at
             .as_deref()
@@ -88,11 +96,7 @@ async fn schedule_due_at(
         if has_pending {
             continue;
         }
-        let current = month.year == now.year() as i64 && month.month == now.month() as i64;
-        let interval =
-            month
-                .override_seconds
-                .unwrap_or(if current { one_hour } else { older_interval });
+        let interval = month.override_seconds.unwrap_or(current_month_interval);
         let next = (now + chrono::Duration::seconds(interval)).to_rfc3339();
         sqlx::query("INSERT INTO refresh_jobs (id,scope,feed_id,year,month_id,force,status) VALUES (?, 'month', ?, ?, ?, 0, 'queued')")
             .bind(uuid::Uuid::new_v4().to_string()).bind(&month.feed_id).bind(month.year).bind(&month.id).execute(pool).await?;
@@ -295,7 +299,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_uses_calendar_priority_overrides_and_deduplicates_pending_jobs() {
+    async fn scheduler_only_refreshes_current_month_and_deduplicates_pending_jobs() {
         let (pool, path) = crate::test_support::database().await;
         let now = Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap();
         insert_feed(&pool, "default", None).await;
@@ -306,19 +310,30 @@ mod tests {
             &pool,
             "override",
             2026,
+            11,
+            "override-current",
+            "fixture://override-current/",
+        )
+        .await;
+        insert_month(
+            &pool,
+            "override",
+            2026,
             10,
             "override-month",
             "fixture://override/",
         )
         .await;
+        sqlx::query(
+            "UPDATE feed_months SET next_refresh_at='2026-11-14T12:00:00Z' WHERE id='older'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        schedule_due_at(&pool, now, 3600, 86400).await.unwrap();
+        schedule_due_at(&pool, now, 3600).await.unwrap();
 
-        for (month_id, expected_seconds) in [
-            ("current", 3600),
-            ("older", 86400),
-            ("override-month", 1800),
-        ] {
+        for (month_id, expected_seconds) in [("current", 3600), ("override-current", 1800)] {
             let next: String =
                 sqlx::query_scalar("SELECT next_refresh_at FROM feed_months WHERE id=?")
                     .bind(month_id)
@@ -328,19 +343,54 @@ mod tests {
             let next = DateTime::parse_from_rfc3339(&next).unwrap().timestamp();
             assert_eq!(next - now.timestamp(), expected_seconds, "{month_id}");
         }
+        let older_next: Option<String> =
+            sqlx::query_scalar("SELECT next_refresh_at FROM feed_months WHERE id='older'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(older_next, None);
         let jobs: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM refresh_jobs WHERE status='queued'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(jobs, 3);
-        schedule_due_at(&pool, now, 3600, 86400).await.unwrap();
+        assert_eq!(jobs, 2);
+        schedule_due_at(&pool, now, 3600).await.unwrap();
         let jobs_after_second_run: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM refresh_jobs WHERE status='queued'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(jobs_after_second_run, jobs);
+        crate::test_support::cleanup(pool, path).await;
+    }
+
+    #[tokio::test]
+    async fn scheduler_moves_automatic_refresh_to_new_current_month() {
+        let (pool, path) = crate::test_support::database().await;
+        let november = Utc.with_ymd_and_hms(2026, 11, 30, 23, 59, 0).unwrap();
+        let december = Utc.with_ymd_and_hms(2026, 12, 1, 0, 1, 0).unwrap();
+        insert_feed(&pool, "feed", None).await;
+        insert_month(&pool, "feed", 2026, 11, "november", "fixture://november/").await;
+        insert_month(&pool, "feed", 2026, 12, "december", "fixture://december/").await;
+
+        schedule_due_at(&pool, november, 3600).await.unwrap();
+        schedule_due_at(&pool, december, 3600).await.unwrap();
+
+        let december_jobs: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM refresh_jobs WHERE month_id='december' AND status='queued'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(december_jobs, 1);
+        let november_next: Option<String> =
+            sqlx::query_scalar("SELECT next_refresh_at FROM feed_months WHERE id='november'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(november_next, None);
+
         crate::test_support::cleanup(pool, path).await;
     }
 
