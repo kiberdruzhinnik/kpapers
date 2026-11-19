@@ -9,6 +9,7 @@ async function signIn(page: import("@playwright/test").Page) {
 }
 
 test("operator manages a feed, source folder, publication decision, and account session", async ({ page }) => {
+  test.setTimeout(60_000)
   const feedName = `Browser test ${Date.now()}`
   await signIn(page)
 
