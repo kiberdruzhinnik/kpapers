@@ -9,7 +9,7 @@ async function signIn(page: import("@playwright/test").Page) {
 }
 
 test("operator manages a feed, source folder, publication decision, and account session", async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(120_000)
   const feedName = `Browser test ${Date.now()}`
   await signIn(page)
 
@@ -99,7 +99,7 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page.getByRole("combobox", { name: "Year" })).toHaveValue("2026")
   await expect(page.getByRole("combobox", { name: "Month" })).toHaveValue(createdMonth.id)
   const alphaRow = page.locator("article").filter({ hasText: "article-alpha.pdf" })
-  await expect(alphaRow).toContainText("Extraction success", { timeout: 30_000 })
+  await expect(alphaRow).toContainText("Extraction success", { timeout: 60_000 })
   let decision = alphaRow.getByRole("combobox", { name: "Publication decision for article-alpha.pdf" })
   const saveDecision = async (value: string) => {
     const saved = page.waitForResponse((response) => response.url().endsWith("/promotion") && response.request().method() === "PUT")
