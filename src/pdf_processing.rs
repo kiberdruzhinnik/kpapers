@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 22;
+const EXTRACTION_PIPELINE_REVISION: u32 = 29;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
@@ -73,22 +73,25 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
 fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
     let mut styled = Vec::with_capacity(lines.len());
     let mut previous_top = None;
+    let mut quote_stack = Vec::new();
     for line in lines {
         let mut runs = Vec::new();
         let mut previous_word: Option<(&str, f32)> = None;
         let mut previous_word_style = None;
+        let mut previous_word_closed_quote = false;
         for word in &line.words {
             let text = word.text.trim();
             if text.is_empty() {
                 continue;
             }
             if let Some((previous_text, previous_right)) = previous_word
-                && should_insert_word_space(
+                && (should_insert_word_space(
                     previous_text,
                     text,
                     word.bbox.x - previous_right,
                     word.avg_font_size,
-                )
+                ) || (previous_word_closed_quote
+                    && text.chars().next().is_some_and(char::is_alphanumeric)))
             {
                 let (previous_bold, previous_italic) = previous_word_style.unwrap_or_default();
                 runs.push(StyledRun {
@@ -102,6 +105,7 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
                 bold: word.is_bold,
                 italic: word.is_italic,
             });
+            previous_word_closed_quote = update_quote_stack(text, &mut quote_stack);
             previous_word = Some((text, word.bbox.x + word.bbox.width));
             previous_word_style = Some((word.is_bold, word.is_italic));
         }
@@ -128,6 +132,25 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
     styled
 }
 
+fn update_quote_stack(text: &str, quote_stack: &mut Vec<char>) -> bool {
+    let mut closed_quote = false;
+    for ch in text.chars() {
+        if quote_stack.last() == Some(&ch) {
+            quote_stack.pop();
+            closed_quote = true;
+        } else if let Some(close) = match ch {
+            '„' => Some('“'),
+            '«' => Some('»'),
+            '“' => Some('”'),
+            '‘' => Some('’'),
+            _ => None,
+        } {
+            quote_stack.push(close);
+        }
+    }
+    closed_quote
+}
+
 fn should_insert_word_space(previous: &str, next: &str, gap: f32, font_size: f32) -> bool {
     let Some(first_next) = next.chars().next() else {
         return false;
@@ -142,7 +165,65 @@ fn should_insert_word_space(previous: &str, next: &str, gap: f32, font_size: f32
         return false;
     }
 
+    // Opening parentheses begin parenthetical prose and are normally
+    // separated from the preceding word even when PDF geometry is tight.
+    if first_next == '(' {
+        return true;
+    }
+
+    // Opening guillemets belong to the following quoted word, not the one
+    // before them. Preserve the separating space even when PDF geometry is tight.
+    if matches!(first_next, '«' | '„') {
+        return true;
+    }
+
+    if crosses_latin_cyrillic_word_boundary(previous, next) {
+        return true;
+    }
+
+    if crosses_letter_digit_boundary(previous, next) {
+        return true;
+    }
+
     gap > font_size.max(1.0) * 0.18
+}
+
+fn crosses_latin_cyrillic_word_boundary(previous: &str, next: &str) -> bool {
+    let previous_char = previous
+        .trim_end()
+        .chars()
+        .rev()
+        .find(|ch| ch.is_alphanumeric());
+    let next_char = next.chars().find(|ch| ch.is_alphanumeric());
+    let (Some(previous_char), Some(next_char)) = (previous_char, next_char) else {
+        return false;
+    };
+
+    (is_cyrillic(previous_char) && is_latin(next_char))
+        || (is_latin(previous_char) && is_cyrillic(next_char))
+}
+
+fn crosses_letter_digit_boundary(previous: &str, next: &str) -> bool {
+    let previous_char = previous
+        .trim_end()
+        .chars()
+        .rev()
+        .find(|ch| ch.is_alphanumeric());
+    let next_char = next.chars().find(|ch| ch.is_alphanumeric());
+    let (Some(previous_char), Some(next_char)) = (previous_char, next_char) else {
+        return false;
+    };
+
+    (previous_char.is_alphabetic() && next_char.is_numeric())
+        || (previous_char.is_numeric() && next_char.is_alphabetic())
+}
+
+fn is_latin(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || matches!(ch as u32, 0x00C0..=0x024F | 0x1E00..=0x1EFF)
+}
+
+fn is_cyrillic(ch: char) -> bool {
+    matches!(ch as u32, 0x0400..=0x052F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F)
 }
 
 fn finalize_pages(
@@ -167,6 +248,7 @@ fn finalize_pages(
     strip_page_labels_by_content_position(&mut pages);
     if let Some(first_page) = pages.first_mut() {
         strip_sponsr_preamble(first_page);
+        strip_crimsonanalytics_preamble(first_page);
     }
     strip_sponsr_branding(&mut pages);
 
@@ -212,6 +294,7 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
         .map(|index| &stem[index..])
         .unwrap_or(stem)
         .replace("FAQ_", "FAQ:");
+    let title = normalize_title_for_comparison(&title);
     if !title.starts_with('[') {
         return;
     }
@@ -232,9 +315,10 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
         blocks = vec![];
     }
     let recovered_title_block = blocks.first().is_some_and(|block| {
-        strip_html_tags(block)
-            .trim_start()
-            .starts_with("[Философское]")
+        let recovered_title = strip_html_tags(block);
+        recovered_title.trim_start().starts_with("[Философское]")
+            || normalize_title_for_comparison(&recovered_title)
+                == normalize_title_for_comparison(&title)
     });
     if recovered_title_block {
         blocks.remove(0);
@@ -313,6 +397,14 @@ fn strip_html_tags(text: &str) -> String {
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+fn normalize_title_for_comparison(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("и\u{0306}", "й")
+        .replace("И\u{0306}", "Й")
 }
 
 fn has_publication_timestamp(text: &str) -> bool {
@@ -668,7 +760,8 @@ fn discretionary_line_hyphen(previous: &str, next: &str) -> bool {
     // These established lexical compounds must retain their hyphen when wrapped.
     !((previous.ends_with("по-") && next.starts_with("товарищески"))
         || (previous.ends_with("чем-") && next.starts_with("нибудь"))
-        || (previous.ends_with("объяснения-") && next.starts_with("мастерключа")))
+        || (previous.ends_with("объяснения-") && next.starts_with("мастерключа"))
+        || (previous.ends_with("проповедники-") && next.starts_with("фундаменталисты")))
 }
 
 fn body_text_size(pages: &[Vec<StyledLine>]) -> f32 {
@@ -725,7 +818,10 @@ fn is_heading_candidate(line: &StyledLine, body_size: f32) -> bool {
 /// The first content line of a document has no preceding gap, so an opening
 /// title is identified from its larger type and position instead of spacing.
 fn is_opening_title_candidate(line: &StyledLine, body_size: f32, index: usize) -> bool {
-    index == 0 && line.text().chars().count() <= 160 && line.size >= body_size * 1.35
+    index == 0
+        && (line.text().chars().count() <= 160
+            || (line.text().trim_start().starts_with('[') && line.text().chars().count() <= 500))
+        && line.size >= body_size * 1.35
 }
 
 fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: f32) -> bool {
@@ -893,8 +989,11 @@ fn merge_wrapped_title_lines(pages: &mut [Vec<StyledLine>]) {
         while line_index + 1 < page.len() {
             let previous = &page[line_index];
             let next = &page[line_index + 1];
+            let title_continuation = previous.text().trim_start().starts_with('[');
             let is_heading_sized = |line: &StyledLine| {
-                line.text().chars().count() <= 160 && line.size >= body_size * 1.08
+                (line.text().chars().count() <= 160
+                    || (title_continuation && line.text().chars().count() <= 500))
+                    && line.size >= body_size * 1.08
             };
             let similar_size =
                 (previous.size - next.size).abs() <= previous.size.max(next.size) * 0.05;
@@ -952,6 +1051,54 @@ fn strip_sponsr_preamble(page: &mut Vec<StyledLine>) {
     if title_index > 0 {
         page.drain(..title_index);
     }
+}
+
+fn strip_crimsonanalytics_preamble(page: &mut Vec<StyledLine>) {
+    let branding_end = (0..page.len().min(8)).find_map(|start| {
+        (1..=3).find_map(|width| {
+            let end = (start + width).min(page.len());
+            let text = page[start..end]
+                .iter()
+                .map(StyledLine::text)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+                .replace(['–', '—', '−'], "-");
+            (text.contains("кримсон аналитика") && text.contains("crimsonanalytics")).then_some(end)
+        })
+    });
+    let Some(branding_end) = branding_end else {
+        return;
+    };
+
+    let Some(title_index) = page
+        .iter()
+        .enumerate()
+        .skip(branding_end)
+        .find_map(|(index, line)| {
+            let text = line.text();
+            (text.trim_start().starts_with('[') && text.chars().count() >= 24).then_some(index)
+        })
+    else {
+        return;
+    };
+    let metadata = page[branding_end..title_index]
+        .iter()
+        .map(StyledLine::text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lower_metadata = metadata.to_lowercase();
+    let has_reading_duration = lower_metadata
+        .split_whitespace()
+        .any(|part| part.parse::<u32>().is_ok())
+        && ["минута", "минуты", "минут", "час", "часа", "часов"]
+            .iter()
+            .any(|unit| lower_metadata.contains(unit));
+    if !has_publication_timestamp(&metadata) || !has_reading_duration {
+        return;
+    }
+
+    page.drain(..title_index);
 }
 
 fn strip_sponsr_branding(pages: &mut [Vec<StyledLine>]) {
@@ -1162,6 +1309,7 @@ mod tests {
     };
     use pdf_oxide::geometry::Rect;
     use pdf_oxide::layout::{FontWeight, TextChar, TextLine, Word};
+
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
@@ -1296,6 +1444,89 @@ mod tests {
         strip_sponsr_preamble(&mut page);
         assert_eq!(page[0].text(), "[Философское] «Старые деньги» — FAQ:");
         assert_eq!(page.len(), 3);
+    }
+
+    #[test]
+    fn removes_crimsonanalytics_header_before_the_article_title() {
+        let pages = vec![vec![
+            line("Кримсон Аналитика –", 22.0),
+            line("CrimsonAnalytics", 22.0),
+            line("Кримсон Аналитика – CrimsonAnalytics", 12.0),
+            line("19 нояб 10:49", 10.0),
+            line("1 минута", 10.0),
+            line(
+                "[Новостной деск] Последствия ударов по Крымскому мосту",
+                22.0,
+            ),
+            line("Сразу к делу, дорогие коллеги.", 12.0),
+        ]];
+
+        let extracted = finalize_pages(pages, 1).expect("article text should remain");
+        assert!(
+            extracted
+                .first_page
+                .starts_with("[Новостной деск] Последствия ударов"),
+            "{}",
+            extracted.first_page
+        );
+        assert!(!extracted.first_page.contains("Кримсон Аналитика"));
+        assert!(!extracted.first_page.contains("19 нояб 10:49"));
+        assert!(!extracted.first_page.contains("1 минута"));
+    }
+
+    #[test]
+    fn renders_long_wrapped_crimsonanalytics_headline_as_one_title() {
+        let mut body_line = line("Тело статьи начинается здесь.", 12.0);
+        body_line.gap_before = 30.0;
+        let pages = vec![vec![
+            line("Кримсон Аналитика – CrimsonAnalytics", 22.0),
+            line("19 нояб 10:49", 10.0),
+            line("1 минута", 10.0),
+            line("[Новостной деск] Последствия ударов", 22.5),
+            line("по Крымскому мосту, контуры «плана", 22.5),
+            line("Кушнера» по продаже «украинского", 22.5),
+            line("будущего» лондонским покровителям", 22.5),
+            line("Зеленского и пять причин в пользу", 22.5),
+            line("возобновления «горячей» войны с Ираном", 22.5),
+            line("Сразу к делу, дорогие коллеги.", 12.0),
+            body_line,
+        ]];
+
+        let mut extracted = finalize_pages(pages, 1).expect("article text should remain");
+        super::repair_sponsr_title_from_filename(
+            "[Новостнои\u{0306} деск] Последствия ударов по Крымскому мосту, контуры «плана Кушнера» по продаже «украинского будущего» лондонским покровителям Зеленского и пять причин в пользу возобновления «горячей» войны с Ираном [skladchik.org].pdf",
+            &mut extracted,
+        );
+        let title = "[Новостной деск] Последствия ударов по Крымскому мосту, контуры «плана Кушнера» по продаже «украинского будущего» лондонским покровителям Зеленского и пять причин в пользу возобновления «горячей» войны с Ираном";
+        assert!(
+            extracted
+                .html
+                .starts_with(&format!("<h1><strong>{title}</strong></h1>")),
+            "{}",
+            extracted.html
+        );
+        assert_eq!(
+            extracted.html.matches(title).count(),
+            1,
+            "{}",
+            extracted.html
+        );
+        assert!(
+            extracted
+                .html
+                .contains("<p>Сразу к делу, дорогие коллеги.</p>"),
+            "{}",
+            extracted.html
+        );
+        assert!(
+            extracted
+                .html
+                .ends_with("<p>Тело статьи начинается здесь.</p>"),
+            "{}",
+            extracted.html
+        );
+        assert!(!extracted.html.contains("19 нояб 10:49"));
+        assert!(!extracted.html.contains("1 минута"));
     }
 
     #[test]
@@ -1808,7 +2039,14 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v22:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v28:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v27:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v26:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v25:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v24:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v23:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v22:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v20:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v19:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v18:pdf_oxide:{source}"));
@@ -1846,6 +2084,358 @@ mod tests {
             .into_iter()
             .next()
             .expect("fixture has words")
+    }
+
+    #[test]
+    fn reconstructs_spacing_before_parentheses_even_with_narrow_geometry() {
+        let first = line_from_words(&[
+            ("элите", 0.0, false),
+            ("(если", 0.0, false),
+            ("судить", 4.0, false),
+            ("по", 4.0, false),
+            ("заявлениям", 4.0, false),
+            ("президента,", 4.0, false),
+            ("например)", 4.0, false),
+        ]);
+        assert_eq!(
+            first.text(),
+            "элите (если судить по заявлениям президента, например)"
+        );
+
+        let second = line_from_words(&[
+            ("руководства", 0.0, false),
+            ("и", 4.0, false),
+            ("(возможно)", 0.0, false),
+            ("в головах", 4.0, false),
+            ("политиков,", 4.0, false),
+        ]);
+        assert_eq!(
+            second.text(),
+            "руководства и (возможно) в головах политиков,"
+        );
+
+        let acronym_parenthetical = line_from_words(&[
+            ("Tasnim,", 4.0, false),
+            ("Корпус", 4.0, false),
+            ("стражей", 4.0, false),
+            ("исламской", 4.0, false),
+            ("революции", 4.0, false),
+            ("Ирана", 4.0, false),
+            ("(КСИР)", 0.0, false),
+            ("сообщил,", 4.0, false),
+        ]);
+        assert_eq!(
+            acronym_parenthetical.text(),
+            "Tasnim, Корпус стражей исламской революции Ирана (КСИР) сообщил,"
+        );
+
+        let saudi_oil_report = line_from_words(&[
+            ("Саудовская", 4.0, false),
+            ("Аравия", 4.0, false),
+            ("сообщила", 4.0, false),
+            ("Организации", 4.0, false),
+            ("стран-экспортёров", 4.0, false),
+            ("нефти", 4.0, false),
+            ("(ОПЕК),", 0.0, false),
+            ("что", 4.0, false),
+            ("в", 4.0, false),
+            ("октябре", 4.0, false),
+            ("она", 4.0, false),
+            ("добывала", 4.0, false),
+            ("10,6", 4.0, false),
+            ("млн", 4.0, false),
+            ("баррелей", 4.0, false),
+            ("нефти", 4.0, false),
+            ("в", 4.0, false),
+            ("сутки", 4.0, false),
+            ("(б/с),", 0.0, false),
+            ("по", 4.0, false),
+            ("сравнению", 4.0, false),
+            ("с", 4.0, false),
+            ("8,372", 0.0, false),
+            ("млн", 4.0, false),
+            ("б/с", 4.0, false),
+            ("в", 4.0, false),
+            ("сентябре.", 4.0, false),
+        ]);
+        assert_eq!(
+            saudi_oil_report.text(),
+            "Саудовская Аравия сообщила Организации стран-экспортёров нефти (ОПЕК), что в октябре она добывала 10,6 млн баррелей нефти в сутки (б/с), по сравнению с 8,372 млн б/с в сентябре."
+        );
+
+        let reported = line_from_words(&[
+            ("раз", 4.0, false),
+            ("(", 0.0, false),
+            ("с", 0.0, false),
+            ("точки", 4.0, false),
+            ("зрения", 4.0, false),
+            ("её", 4.0, false),
+            ("авторов", 4.0, false),
+            (")", 0.0, false),
+            ("находилась", 4.0, false),
+        ]);
+        assert_eq!(
+            reported.text(),
+            "раз (с точки зрения её авторов) находилась"
+        );
+
+        let second_reported = line_from_words(&[
+            ("В", 4.0, false),
+            ("этом", 4.0, false),
+            ("смысле", 4.0, false),
+            ("эффект", 4.0, false),
+            ("наглядности", 4.0, false),
+            ("должен", 4.0, false),
+            ("был", 4.0, false),
+            ("(", 0.0, false),
+            ("и", 0.0, false),
+            ("мог", 4.0, false),
+            ("бы)", 4.0, false),
+            ("сработать", 4.0, false),
+        ]);
+        assert_eq!(
+            second_reported.text(),
+            "В этом смысле эффект наглядности должен был (и мог бы) сработать"
+        );
+
+        let third_reported = line_from_words(&[
+            ("горящие", 4.0, false),
+            ("НПЗ", 4.0, false),
+            ("и", 4.0, false),
+            ("взорванные", 4.0, false),
+            ("мосты", 4.0, false),
+            ("—", 4.0, false),
+            ("это", 4.0, false),
+            ("очень", 4.0, false),
+            ("круто", 4.0, false),
+            ("(", 0.0, false),
+            ("с", 0.0, false),
+            ("точки", 4.0, false),
+            ("зрения", 4.0, false),
+            ("наших", 4.0, false),
+            ("оппонентов)", 4.0, false),
+            (",", 0.0, false),
+            ("но", 4.0, false),
+        ]);
+        assert_eq!(
+            third_reported.text(),
+            "горящие НПЗ и взорванные мосты — это очень круто (с точки зрения наших оппонентов), но"
+        );
+
+        let punctuation = line_from_words(&[
+            ("атаки,", 0.0, false),
+            ("например", 4.0, false),
+            (")", 0.0, false),
+        ]);
+        assert_eq!(punctuation.text(), "атаки, например)");
+
+        let language_boundary = line_from_words(&[
+            ("Посмотрите", 4.0, false),
+            ("(", 0.0, false),
+            ("это", 4.0, false),
+            ("цитата", 4.0, false),
+            ("из", 4.0, false),
+            ("Rаpporteur,", 0.0, false),
+            ("т.", 4.0, false),
+            ("е.", 4.0, false),
+            ("самый", 4.0, false),
+            ("мейнстримный", 4.0, false),
+        ]);
+        assert_eq!(
+            language_boundary.text(),
+            "Посмотрите (это цитата из Rаpporteur, т. е. самый мейнстримный"
+        );
+
+        let quoted_boundary = line_from_words(&[
+            ("[Прим.", 4.0, false),
+            ("Кримсон:", 4.0, false),
+            ("под", 4.0, false),
+            ("„", 4.0, false),
+            ("миром", 0.0, false),
+            ("“", 0.0, false),
+            ("подразумевается", 0.0, false),
+            ("„", 4.0, false),
+            ("мир", 0.0, false),
+            ("“", 0.0, false),
+            ("на", 0.0, false),
+            ("лондских", 4.0, false),
+            ("условиях],", 4.0, false),
+        ]);
+        assert_eq!(
+            quoted_boundary.text(),
+            "[Прим. Кримсон: под „миром“ подразумевается „мир“ на лондских условиях],"
+        );
+
+        let quote_before_word = line_from_words(&[
+            ("а", 4.0, false),
+            ("другой", 4.0, false),
+            ("стороне", 4.0, false),
+            ("—", 4.0, false),
+            ("„ехать“", 4.0, false),
+            ("из", 0.0, false),
+            ("известного", 4.0, false),
+            ("советского", 4.0, false),
+            ("анекдота». ", 4.0, false),
+        ]);
+        assert_eq!(
+            quote_before_word.text(),
+            "а другой стороне — „ехать“ из известного советского анекдота»."
+        );
+
+        let quote_before_words_in_report = line_from_words(&[
+            ("Тегеран", 4.0, false),
+            ("разрабатывает", 4.0, false),
+            ("планы", 4.0, false),
+            ("по", 4.0, false),
+            ("возможному", 4.0, false),
+            ("подрыву", 4.0, false),
+            ("„грязной", 4.0, false),
+            ("бомбы“", 4.0, false),
+            ("в", 0.0, false),
+            ("столице", 4.0, false),
+            ("США.", 4.0, false),
+            ("„Грязная", 4.0, false),
+            ("бомба“", 4.0, false),
+            ("использует", 0.0, false),
+            ("обычные", 4.0, false),
+            ("взрывчатые", 4.0, false),
+            ("вещества", 4.0, false),
+            ("для", 4.0, false),
+            ("рассеивания", 4.0, false),
+            ("радиоактивных", 4.0, false),
+            ("материалов.", 4.0, false),
+        ]);
+        assert_eq!(
+            quote_before_words_in_report.text(),
+            "Тегеран разрабатывает планы по возможному подрыву „грязной бомбы“ в столице США. „Грязная бомба“ использует обычные взрывчатые вещества для рассеивания радиоактивных материалов."
+        );
+
+        let opening_guillemet = line_from_words(&[
+            ("или", 4.0, false),
+            ("готовность", 4.0, false),
+            ("к", 4.0, false),
+            ("отступлению", 4.0, false),
+            ("и", 4.0, false),
+            ("вообще", 4.0, false),
+            ("в", 4.0, false),
+            ("целом", 4.0, false),
+            ("как", 4.0, false),
+            ("«сопливость»,", 0.0, false),
+            ("а", 4.0, false),
+            ("не", 4.0, false),
+            ("благородство", 4.0, false),
+            ("или", 4.0, false),
+            ("гуманизм.", 4.0, false),
+        ]);
+        assert_eq!(
+            opening_guillemet.text(),
+            "или готовность к отступлению и вообще в целом как «сопливость», а не благородство или гуманизм."
+        );
+
+        let opening_guillemet_after_preposition = line_from_words(&[
+            ("Вот", 4.0, false),
+            ("это", 4.0, false),
+            ("получается", 4.0, false),
+            ("про", 4.0, false),
+            ("«суть». ", 0.0, false),
+        ]);
+        assert_eq!(
+            opening_guillemet_after_preposition.text(),
+            "Вот это получается про «суть»."
+        );
+
+        let opening_guillemet_after_preposition_in_phrase = line_from_words(&[
+            ("идущие", 4.0, false),
+            ("по", 4.0, false),
+            ("«несанкционированным»", 0.0, false),
+            ("маршрутам,", 4.0, false),
+        ]);
+        assert_eq!(
+            opening_guillemet_after_preposition_in_phrase.text(),
+            "идущие по «несанкционированным» маршрутам,"
+        );
+
+        let opening_low_quote = line_from_words(&[
+            ("и", 4.0, false),
+            ("кто", 4.0, false),
+            ("будет", 4.0, false),
+            ("платить", 4.0, false),
+            ("за", 4.0, false),
+            ("„фонды", 0.0, false),
+            ("поддержки“", 4.0, false),
+            ("новопринятого", 0.0, false),
+            ("члена,", 4.0, false),
+        ]);
+        assert_eq!(
+            opening_low_quote.text(),
+            "и кто будет платить за „фонды поддержки“ новопринятого члена,"
+        );
+
+        let month_year_boundary = line_from_words(&[
+            ("Его", 4.0, false),
+            ("запустили", 4.0, false),
+            ("в", 4.0, false),
+            ("марте", 4.0, false),
+            ("2026", 0.0, false),
+            ("года,", 4.0, false),
+        ]);
+        assert_eq!(
+            month_year_boundary.text(),
+            "Его запустили в марте 2026 года,"
+        );
+
+        let war_date_boundary = line_from_words(&[
+            ("С", 4.0, false),
+            ("начала", 4.0, false),
+            ("войны", 4.0, false),
+            ("28", 0.0, false),
+            ("февраля,", 4.0, false),
+            ("когда", 4.0, false),
+            ("США", 4.0, false),
+            ("и", 4.0, false),
+            ("Израиль", 4.0, false),
+            ("нанесли", 4.0, false),
+            ("удары,", 4.0, false),
+        ]);
+        assert_eq!(
+            war_date_boundary.text(),
+            "С начала войны 28 февраля, когда США и Израиль нанесли удары,"
+        );
+
+        let wildberries = line_from_words(&[
+            ("инфраструктуру,", 4.0, false),
+            ("такую", 4.0, false),
+            ("как", 4.0, false),
+            ("Wildberries,", 0.0, false),
+            ("на", 4.0, false),
+            ("самом", 4.0, false),
+            ("деле,", 4.0, false),
+            ("вероятно,", 4.0, false),
+        ]);
+        assert_eq!(
+            wildberries.text(),
+            "инфраструктуру, такую как Wildberries, на самом деле, вероятно,"
+        );
+
+        let number_boundary = line_from_words(&[
+            ("Причина,", 4.0, false),
+            ("по", 4.0, false),
+            ("которой", 4.0, false),
+            ("высокопоставленные", 4.0, false),
+            ("чиновники", 4.0, false),
+            ("Пентагона", 4.0, false),
+            ("только", 4.0, false),
+            ("после", 4.0, false),
+            ("4", 0.0, false),
+            ("(!)", 0.0, false),
+            ("лет", 4.0, false),
+            ("СВО", 4.0, false),
+            ("открыли", 4.0, false),
+        ]);
+        assert_eq!(
+            number_boundary.text(),
+            "Причина, по которой высокопоставленные чиновники Пентагона только после 4 (!) лет СВО открыли"
+        );
     }
 
     #[test]
@@ -2096,10 +2686,12 @@ mod tests {
             ),
             line("В качестве объяснения-", 12.0),
             line("мастерключа напечатана формула.", 12.0),
+            line("который ему обещали проповедники-", 12.0),
+            line("фундаменталисты (диспенсационалисты).", 12.0),
             line("Обычный перенос строки", 12.0),
             line("должен сохранить пробел.", 12.0),
         ]];
-        let expected = "В конце спича рассказчик предложил добавить ему и совместно, по-товарищески, приобрести и употребить беленькую. То есть, как бы героя ни кидало по жизни, чем-нибудь нужным он занимался неизменно — в любую погоду. В качестве объяснения-мастерключа напечатана формула. Обычный перенос строки должен сохранить пробел.";
+        let expected = "В конце спича рассказчик предложил добавить ему и совместно, по-товарищески, приобрести и употребить беленькую. То есть, как бы героя ни кидало по жизни, чем-нибудь нужным он занимался неизменно — в любую погоду. В качестве объяснения-мастерключа напечатана формула. который ему обещали проповедники-фундаменталисты (диспенсационалисты). Обычный перенос строки должен сохранить пробел.";
 
         assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
         assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
