@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 21;
+const EXTRACTION_PIPELINE_REVISION: u32 = 22;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
@@ -76,12 +76,12 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
     for line in lines {
         let mut runs = Vec::new();
         let mut previous_word: Option<(&str, f32)> = None;
+        let mut previous_word_style = None;
         for word in &line.words {
             let text = word.text.trim();
             if text.is_empty() {
                 continue;
             }
-            let mut run_text = String::new();
             if let Some((previous_text, previous_right)) = previous_word
                 && should_insert_word_space(
                     previous_text,
@@ -90,15 +90,20 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
                     word.avg_font_size,
                 )
             {
-                run_text.push(' ');
+                let (previous_bold, previous_italic) = previous_word_style.unwrap_or_default();
+                runs.push(StyledRun {
+                    text: " ".into(),
+                    bold: previous_bold && word.is_bold,
+                    italic: previous_italic && word.is_italic,
+                });
             }
-            run_text.push_str(text);
             runs.push(StyledRun {
-                text: run_text,
+                text: text.into(),
                 bold: word.is_bold,
                 italic: word.is_italic,
             });
             previous_word = Some((text, word.bbox.x + word.bbox.width));
+            previous_word_style = Some((word.is_bold, word.is_italic));
         }
         if runs.is_empty() {
             continue;
@@ -754,9 +759,14 @@ fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: 
     }
 
     let similar_size = (previous.size - next.size).abs() <= previous.size.max(next.size) * 0.05;
-    let matching_style = last_content_style(previous)
-        .zip(first_content_style(next))
-        .is_some_and(|(before, after)| before == after);
+    let matching_style = last_content_style(previous).is_some_and(|before| {
+        first_content_style(next) == Some(before)
+            || next
+                .runs
+                .iter()
+                .filter(|run| !run.text.trim().is_empty())
+                .any(|run| (run.bold, run.italic) == before)
+    });
     let compatible_position = (previous.left - next.left).abs() <= previous.size * 0.5;
     similar_size && matching_style && compatible_position
 }
@@ -1151,7 +1161,7 @@ mod tests {
         text_to_safe_html,
     };
     use pdf_oxide::geometry::Rect;
-    use pdf_oxide::layout::{TextChar, TextLine, Word};
+    use pdf_oxide::layout::{FontWeight, TextChar, TextLine, Word};
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
@@ -1798,7 +1808,7 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v21:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v22:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v20:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v19:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v18:pdf_oxide:{source}"));
@@ -1882,7 +1892,7 @@ mod tests {
         let html = lines_to_html(&[vec![first]]);
         assert_eq!(
             html,
-            "<p>У современной поп-психологии на эту тему имеется сколько угодно воркования вида «надо понять и учесть», «инерция восприятия», «привычка к прежнему распределению ролей<em> спаситель — заколдованная жертва»</em> и всё такое.</p>"
+            "<p>У современной поп-психологии на эту тему имеется сколько угодно воркования вида «надо понять и учесть», «инерция восприятия», «привычка к прежнему распределению ролей <em>спаситель — заколдованная жертва»</em> и всё такое.</p>"
         );
 
         let second = line_from_words(&[
@@ -1952,6 +1962,40 @@ mod tests {
             lines_to_html(&[vec![second]]),
             "<p>Звучит абсолютно по-идиотски, бессмысленно, беспощадно, ужасно и отвратительно. Но именно этим занимались примитивные племена Австралии до самого прихода европейцев (и, возможно, мы не погрешим против истины, предположив, что не в последнюю очередь благодаря этому идиотизму европейцы застали аборигенов в худшем, кажется, культурно-техническом состоянии, чем кого бы то ни было из встретившихся им дикарей).</p>"
         );
+    }
+
+    #[test]
+    fn preserves_bold_word_metadata_through_html_rendering() {
+        let make_word = |text: &str, left: f32, weight: FontWeight| {
+            let chars = text
+                .chars()
+                .enumerate()
+                .map(|(index, ch)| {
+                    let mut text_char = TextChar::simple(
+                        ch,
+                        Rect::new(left + index as f32 * 6.0, 20.0, 6.0, 12.0),
+                        "Fixture".into(),
+                        12.0,
+                    );
+                    text_char.font_weight = weight;
+                    text_char
+                })
+                .collect();
+            Word::from_chars(chars)
+        };
+        let words = vec![
+            make_word("Слово", 0.0, FontWeight::Normal),
+            make_word("важно", 42.0, FontWeight::Bold),
+            make_word("здесь.", 84.0, FontWeight::Normal),
+        ];
+        let lines = text_lines_to_styled_lines(vec![TextLine::new(words)]);
+        assert_eq!(lines[0].runs[1].text, " ");
+        assert!(!lines[0].runs[1].bold);
+        assert_eq!(lines[0].runs[2].text, "важно");
+        assert!(lines[0].runs[2].bold);
+
+        let html = lines_to_html(&[lines]);
+        assert_eq!(html, "<p>Слово <strong>важно</strong> здесь.</p>");
     }
 
     #[test]
@@ -2153,6 +2197,37 @@ mod tests {
 
         assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
         assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn joins_page_continuation_when_first_word_is_emphasized() {
+        let pages = vec![
+            vec![line("уже отвечалось, потому что", 15.0)],
+            vec![StyledLine {
+                runs: vec![
+                    StyledRun {
+                        text: "любой".into(),
+                        bold: false,
+                        italic: true,
+                    },
+                    StyledRun {
+                        text: " вопрос есть вопрос добра и зла.".into(),
+                        bold: false,
+                        italic: false,
+                    },
+                ],
+                size: 15.0,
+                gap_before: 0.0,
+                left: 50.0,
+            }],
+        ];
+        let expected = "уже отвечалось, потому что любой вопрос есть вопрос добра и зла.";
+
+        assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
+        assert_eq!(
+            lines_to_html(&pages),
+            "<p>уже отвечалось, потому что <em>любой</em> вопрос есть вопрос добра и зла.</p>"
+        );
     }
 
     #[test]
