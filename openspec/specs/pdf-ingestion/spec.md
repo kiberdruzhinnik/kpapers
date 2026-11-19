@@ -177,6 +177,10 @@ The system SHALL join line-wrapped text within a paragraph using spaces while pr
 - **WHEN** the PDF layout indicates that a large vertical gap separates complete prose paragraphs and no continuation evidence applies
 - **THEN** the paragraphs remain distinct in extracted text and published HTML
 
+#### Scenario: A lowercase sentence continuation follows a page-ending conjunction
+- **WHEN** a page ends with `потому что` and the next page begins with `любой вопрос есть вопрос добра и зла`, as in the supplied PDF, with layout indicating the same paragraph
+- **THEN** the extracted text and published HTML contain `потому что любой вопрос есть вопрос добра и зла` in one paragraph
+
 ### Requirement: Join parenthetical continuations across page boundaries
 The system SHALL keep a prose paragraph continuous across a PDF page boundary when the next page begins with a parenthetical continuation and the text and layout indicate that it continues the preceding paragraph.
 
@@ -274,6 +278,10 @@ The system SHALL represent bold text with `<strong>` and italic text with `<em>`
 #### Scenario: Keep an explicit bold disclaimer in a paragraph
 - **WHEN** a Sponsr article contains the matched literal Markdown disclaimer `**это не инвестиционные рекомендации**` after its title
 - **THEN** the markers are removed and the disclaimer is rendered as `<p><strong>это не инвестиционные рекомендации</strong></p>`, not as a heading
+
+#### Scenario: Preserve a bold word within regular prose
+- **WHEN** a PDF paragraph contains a word set in bold between normally styled words
+- **THEN** the word is emitted inside `<strong>` while surrounding text remains unwrapped and in the original reading order
 
 ### Requirement: Render visually indented notice regions as blockquotes
 The system SHALL identify a notice heading such as “Традиционные технические предуведомления:” and its visually indented continuation region from PDF text position and layout. It SHALL wrap that region in a `<blockquote>`, preserve the heading and paragraph boundaries inside it, and end the blockquote when the text returns to the ordinary body margin. It SHALL preserve ordinary body text outside the indented region.
