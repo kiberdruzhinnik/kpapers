@@ -9,7 +9,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 29;
+const EXTRACTION_PIPELINE_REVISION: u32 = 30;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
@@ -738,16 +738,33 @@ fn remove_line_ending_hyphen(text: &mut String) {
 }
 
 fn hyphenated_line_continuation(previous: &str, next: &str) -> bool {
-    previous
-        .trim_end()
+    let previous = previous.trim_end();
+    let next = next.trim_start();
+    let ends_with_hyphen = previous
         .chars()
         .next_back()
-        .is_some_and(|ch| matches!(ch, '-' | '‐' | '‑'))
-        && next
-            .trim_start()
-            .chars()
-            .next()
-            .is_some_and(char::is_lowercase)
+        .is_some_and(|ch| matches!(ch, '-' | '‐' | '‑'));
+    ends_with_hyphen
+        && (next.chars().next().is_some_and(char::is_lowercase)
+            || lexical_line_hyphen(previous, next))
+}
+
+fn lexical_line_hyphen(previous: &str, next: &str) -> bool {
+    const LEXICAL_COMPOUNDS: &[(&str, &str)] = &[
+        ("по-", "товарищески"),
+        ("чем-", "нибудь"),
+        ("объяснения-", "мастерключа"),
+        ("проповедники-", "фундаменталисты"),
+        ("какой-", "либо"),
+        ("государств-", "членов"),
+        ("Украина-", "Россия"),
+        ("Косиняк-", "Камыш"),
+        ("Эр-", "Рияде"),
+    ];
+
+    LEXICAL_COMPOUNDS
+        .iter()
+        .any(|(left, right)| previous.ends_with(left) && next.starts_with(right))
 }
 
 fn discretionary_line_hyphen(previous: &str, next: &str) -> bool {
@@ -755,13 +772,7 @@ fn discretionary_line_hyphen(previous: &str, next: &str) -> bool {
         return false;
     }
 
-    let previous = previous.trim_end();
-    let next = next.trim_start();
-    // These established lexical compounds must retain their hyphen when wrapped.
-    !((previous.ends_with("по-") && next.starts_with("товарищески"))
-        || (previous.ends_with("чем-") && next.starts_with("нибудь"))
-        || (previous.ends_with("объяснения-") && next.starts_with("мастерключа"))
-        || (previous.ends_with("проповедники-") && next.starts_with("фундаменталисты")))
+    !lexical_line_hyphen(previous, next)
 }
 
 fn body_text_size(pages: &[Vec<StyledLine>]) -> f32 {
@@ -847,7 +858,8 @@ fn page_boundary_continues(previous: &StyledLine, next: &StyledLine, body_size: 
     } else {
         Some(first_char)
     };
-    if !continuation_char.is_some_and(char::is_lowercase)
+    let hyphenated_continuation = hyphenated_line_continuation(&previous_text, &next_text);
+    if (!continuation_char.is_some_and(char::is_lowercase) && !hyphenated_continuation)
         || is_heading_candidate(previous, body_size)
         || is_heading_candidate(next, body_size)
     {
@@ -2039,7 +2051,8 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v30:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v28:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v27:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v26:pdf_oxide:{source}"));
@@ -2695,6 +2708,34 @@ mod tests {
 
         assert_eq!(normalize_text(&pages_to_text(&pages)), expected);
         assert_eq!(lines_to_html(&pages), format!("<p>{expected}</p>"));
+    }
+
+    #[test]
+    fn preserves_reported_lexical_hyphens_across_same_page_and_page_boundary_wraps() {
+        let compounds = [
+            ("какой", "либо", "какой-либо"),
+            ("государств", "членов", "государств-членов"),
+            ("Украина", "Россия", "Украина-Россия"),
+            ("Косиняк", "Камыш", "Косиняк-Камыш"),
+            ("Эр", "Рияде", "Эр-Рияде"),
+        ];
+
+        for (left, right, compound) in compounds {
+            let first_line = format!("В тексте {left}-");
+            let second_line = format!("{right} встречается далее.");
+            let expected = format!("В тексте {compound} встречается далее.");
+
+            let same_page = vec![vec![line(&first_line, 12.0), line(&second_line, 12.0)]];
+            assert_eq!(normalize_text(&pages_to_text(&same_page)), expected);
+            assert_eq!(lines_to_html(&same_page), format!("<p>{expected}</p>"));
+
+            let page_boundary = vec![
+                vec![line(&first_line, 12.0)],
+                vec![line(&second_line, 12.0)],
+            ];
+            assert_eq!(normalize_text(&pages_to_text(&page_boundary)), expected);
+            assert_eq!(lines_to_html(&page_boundary), format!("<p>{expected}</p>"));
+        }
     }
 
     #[test]
