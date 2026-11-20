@@ -1,6 +1,8 @@
 name: Publish containers
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     tags: ["v*.*.*"]
@@ -122,13 +124,13 @@ jobs:
           done <<< "$IMAGE_TAGS"
 
       - name: Publish multi-platform extractor image
-        if: success() && github.event_name != 'pull_request' && matrix.image == 'kpapers-extractor'
+        if: success() && matrix.image == 'kpapers-extractor'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
