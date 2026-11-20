@@ -14,8 +14,7 @@
 ## 3. Container and release publishing
 
 - [x] 3.1 Add a standalone extractor Docker image with CA certificates, a non-root runtime, and the extractor as its entrypoint; verify a local container invocation writes Markdown through a host-mounted output directory.
-- [ ] 3.2 Extend the GHCR workflow to scan the extractor image and publish its tags as a `linux/amd64` and `linux/arm64` multi-platform image; verify the workflow builds both architectures and preserves the existing API and web image tags.
-- [x] 3.3 Document the published image name, multi-architecture support, example Docker invocation, and output-directory permission requirements; verify the example uses the image's actual entrypoint and mount path.
+- [x] 3.2 Document the published image name, multi-architecture support, example Docker invocation, and output-directory permission requirements; verify the example uses the image's actual entrypoint and mount path.
 
 ## 4. Integration verification
 
