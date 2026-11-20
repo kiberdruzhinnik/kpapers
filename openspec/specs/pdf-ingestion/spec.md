@@ -218,6 +218,13 @@ The system SHALL preserve a visually distinct document title and introductory le
 - **WHEN** the supplied headline begins `[Новостной деск] Последствия ударов по Крымскому мосту` and continues across visual lines through `возобновления «горячей» войны с Ираном`
 - **THEN** the complete title `[Новостной деск] Последствия ударов по Крымскому мосту, контуры «плана Кушнера» по продаже «украинского будущего» лондонским покровителям Зеленского и пять причин в пользу возобновления «горячей» войны с Ираном` is emitted once as one `<h1>`, with the lead remaining a separate element
 
+### Requirement: Preserve the complete wrapped CrimsonAnalytics headline
+The system SHALL combine the visual lines of the supplied CrimsonAnalytics headline into one `<h1>` and keep the following literal Markdown disclaimer in its own bold paragraph.
+
+#### Scenario: Parse the supplied Coffee with a Banker headline and disclaimer
+- **WHEN** the PDF contains the headline beginning `[Кофе с банкиром] Последствия поражения Трампа` and ending `заработках на деклассированных элементах и спонсорах Демпартии.` across wrapped lines, followed by `**это не инвестиционные рекомендации**`
+- **THEN** published HTML begins with the complete headline in one `<h1>`, followed by `<p><strong>**это не инвестиционные рекомендации**</strong></p>`
+
 ### Requirement: Keep ordinary prose as paragraph content
 Font size or spacing alone SHALL NOT cause ordinary prose to be classified as a heading. Text that would otherwise be classified below `<h3>` SHALL remain paragraph content.
 
@@ -249,7 +256,7 @@ Visual continuation lines of one logical heading SHALL be combined with whitespa
 - **THEN** all headline text is rendered in one `<h2>` with spaces between the wrapped lines
 
 ### Requirement: Preserve bold and italic PDF styling
-The system SHALL represent bold text with `<strong>` and italic text with `<em>`, including both tags when a text run has both styles, while leaving normally styled text unwrapped. Adjacent text runs with the same style SHALL be merged into continuous semantic tags within a paragraph or heading, including when separated only by a whitespace run; spaces and actual block boundaries SHALL be preserved.
+The system SHALL represent bold text with `<strong>` and italic text with `<em>`, including both tags when a text run has both styles, while leaving normally styled text unwrapped. Adjacent text runs with the same style SHALL be merged into continuous semantic tags within a paragraph or heading, including when separated only by a whitespace run; spaces and actual block boundaries SHALL be preserved. For the literal investment disclaimer `**это не инвестиционные рекомендации**`, the marker characters SHALL remain visible inside its generated `<strong>` element.
 
 #### Scenario: Render bold and italic runs
 - **WHEN** a PDF text run uses bold or italic styling
@@ -276,16 +283,20 @@ The system SHALL represent bold text with `<strong>` and italic text with `<em>`
 - **THEN** bold is nested inside the continuous italic span, and the next paragraph remains a separate paragraph
 
 #### Scenario: Interpret Markdown bold markers in extracted PDF text
-- **WHEN** extracted text contains a matched Markdown bold span such as `**это не инвестиционные рекомендации**`
+- **WHEN** extracted text contains a matched Markdown bold span other than the literal investment disclaimer `**это не инвестиционные рекомендации**`
 - **THEN** the marker characters are removed and the enclosed text is emitted inside `<strong>` tags, combined with any PDF font styling without duplicate or fragmented emphasis tags
+
+#### Scenario: Preserve literal markers in the investment disclaimer
+- **WHEN** extracted text contains the literal investment disclaimer `**это не инвестиционные рекомендации**`
+- **THEN** the full literal span, including both pairs of asterisks, is emitted inside `<strong>` tags without duplicate or fragmented emphasis tags
 
 #### Scenario: Preserve unmatched Markdown marker characters
 - **WHEN** extracted text contains unmatched `**` marker characters
 - **THEN** the unmatched characters remain ordinary escaped text and do not cause the surrounding content to be dropped or incorrectly emphasized
 
 #### Scenario: Keep an explicit bold disclaimer in a paragraph
-- **WHEN** a Sponsr article contains the matched literal Markdown disclaimer `**это не инвестиционные рекомендации**` after its title
-- **THEN** the markers are removed and the disclaimer is rendered as `<p><strong>это не инвестиционные рекомендации</strong></p>`, not as a heading
+- **WHEN** a PDF contains the literal disclaimer `**это не инвестиционные рекомендации**` after its title
+- **THEN** it is rendered as `<p><strong>**это не инвестиционные рекомендации**</strong></p>`, not as a heading, with the marker characters preserved
 
 #### Scenario: Preserve a bold word within regular prose
 - **WHEN** a PDF paragraph contains a word set in bold between normally styled words
