@@ -5,6 +5,7 @@ use pdf_oxide::layout::TextLine;
 pub struct ExtractedText {
     pub full_text: String,
     pub html: String,
+    pub markdown: String,
     pub first_page: String,
     pub page_count: usize,
 }
@@ -271,9 +272,11 @@ fn finalize_pages(
         return Err("PDF contains no usable native text".into());
     }
     let html = lines_to_html(&pages);
+    let markdown = html_to_markdown(&html);
     Ok(ExtractedText {
         full_text,
         html,
+        markdown,
         first_page,
         page_count,
     })
@@ -370,6 +373,7 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
         }
     }
     extracted.html = html;
+    extracted.markdown = html_to_markdown(&extracted.html);
     extracted.first_page = format!(
         "{title}\n{}",
         remove_publication_timestamp(&extracted.first_page)
@@ -378,6 +382,104 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
         "{title}\n\n{}",
         remove_publication_timestamp(&extracted.full_text)
     );
+}
+
+fn html_to_markdown(html: &str) -> String {
+    let mut blocks = Vec::new();
+    let mut quote_blocks = Vec::new();
+    let mut in_quote = false;
+
+    for raw_line in html.lines() {
+        let mut line = raw_line.trim();
+        if let Some(inner) = line.strip_prefix("<blockquote>") {
+            in_quote = true;
+            line = inner;
+        }
+        let closes_quote = in_quote && line.ends_with("</blockquote>");
+        if closes_quote {
+            line = line.strip_suffix("</blockquote>").unwrap_or(line);
+        }
+        let rendered = html_block_to_markdown(line);
+        if !rendered.is_empty() {
+            if in_quote {
+                quote_blocks.push(rendered);
+            } else {
+                blocks.push(rendered);
+            }
+        }
+        if closes_quote {
+            if !quote_blocks.is_empty() {
+                blocks.push(format!("> {}", quote_blocks.join("\n>\n> ")));
+                quote_blocks.clear();
+            }
+            in_quote = false;
+        }
+    }
+
+    if !quote_blocks.is_empty() {
+        blocks.push(format!("> {}", quote_blocks.join("\n>\n> ")));
+    }
+    blocks.join("\n\n")
+}
+
+fn html_block_to_markdown(block: &str) -> String {
+    for (tag, prefix) in [("h1", "# "), ("h2", "## "), ("h3", "### "), ("p", "")] {
+        let open = format!("<{tag}>");
+        let close = format!("</{tag}>");
+        if let Some(content) = block
+            .strip_prefix(&open)
+            .and_then(|content| content.strip_suffix(&close))
+        {
+            return format!("{prefix}{}", html_inline_to_markdown(content));
+        }
+    }
+    html_inline_to_markdown(block)
+}
+
+fn html_inline_to_markdown(input: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while cursor < input.len() {
+        let remaining = &input[cursor..];
+        let (token, replacement, is_formatting) = if remaining.starts_with("<strong>") {
+            ("<strong>", Some("**"), true)
+        } else if remaining.starts_with("</strong>") {
+            ("</strong>", Some("**"), true)
+        } else if remaining.starts_with("<em>") {
+            ("<em>", Some("_"), true)
+        } else if remaining.starts_with("</em>") {
+            ("</em>", Some("_"), true)
+        } else if remaining.starts_with("&amp;") {
+            ("&amp;", Some("&"), false)
+        } else if remaining.starts_with("&lt;") {
+            ("&lt;", Some("<"), false)
+        } else if remaining.starts_with("&gt;") {
+            ("&gt;", Some(">"), false)
+        } else {
+            let ch = remaining.chars().next().expect("cursor is within input");
+            push_markdown_text(&mut output, ch);
+            cursor += ch.len_utf8();
+            continue;
+        };
+        if let Some(replacement) = replacement {
+            if is_formatting {
+                output.push_str(replacement);
+            } else {
+                for ch in replacement.chars() {
+                    push_markdown_text(&mut output, ch);
+                }
+            }
+        }
+        cursor += token.len();
+    }
+    output
+}
+
+fn push_markdown_text(output: &mut String, ch: char) {
+    if matches!(ch, '\\' | '*' | '_' | '`' | '[' | ']' | '<' | '>' | '|') {
+        output.push('\\');
+    }
+    output.push(ch);
 }
 
 fn strip_html_tags(text: &str) -> String {
@@ -2043,6 +2145,7 @@ mod tests {
         let mut extracted = super::ExtractedText {
             full_text: "27 февр 11:44 58 минут Сразу к делу, коллеги.".into(),
             html: "<h1>27 февр 11:44 58 минут</h1>\n<h2>Сразу к делу, коллеги.</h2>".into(),
+            markdown: String::new(),
             first_page: "27 февр 11:44 58 минут Сразу к делу, коллеги.".into(),
             page_count: 1,
         };
@@ -2062,6 +2165,10 @@ mod tests {
             extracted.full_text,
             "[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды\n\nСразу к делу, коллеги."
         );
+        assert_eq!(
+            extracted.markdown,
+            "# **\\[Философское\\] «Старые деньги» — FAQ: как правильно считать дивиденды**\n\nСразу к делу, коллеги."
+        );
     }
 
     #[test]
@@ -2069,6 +2176,7 @@ mod tests {
         let mut extracted = super::ExtractedText {
             full_text: "27 февр 11:44 58 минут body".into(),
             html: "<p>27 февр 11:44</p>\n<h1><strong>это не инвестиционные рекомендации</strong></h1>\n<h2>Сразу к делу, коллеги.</h2>\n<h2><strong>Раздел статьи</strong></h2>\n<blockquote><p>Традиционные технические предуведомления:</p></blockquote>\n<p>Обычный текст после цитаты.</p>".into(),
+            markdown: String::new(),
             first_page: "27 февр 11:44 58 минут body".into(),
             page_count: 1,
         };
@@ -2083,6 +2191,12 @@ mod tests {
                 .contains("<p><strong>это не инвестиционные рекомендации</strong></p>")
         );
         assert!(extracted.html.contains("<p>Сразу к делу, коллеги.</p>"));
+        assert!(extracted.markdown.starts_with("# **\\[Философское\\]"));
+        assert!(
+            extracted
+                .markdown
+                .contains("> Традиционные технические предуведомления:")
+        );
         assert!(
             extracted
                 .html
@@ -2099,6 +2213,16 @@ mod tests {
                 .ends_with("<p>Обычный текст после цитаты.</p>")
         );
         assert!(!extracted.html.contains("27 февр 11:44"));
+    }
+
+    #[test]
+    fn markdown_renderer_preserves_semantic_blocks_and_escapes_source_markup() {
+        assert_eq!(
+            super::html_to_markdown(
+                "<h1>Title &amp; intro</h1>\n<h2><strong>Section</strong></h2>\n<p><em>Soft</em> and **literal** &lt;script&gt;</p>\n<blockquote><p>Notice one</p>\n<p><strong>Notice two</strong></p></blockquote>"
+            ),
+            "# Title & intro\n\n## **Section**\n\n_Soft_ and \\*\\*literal\\*\\* \\<script\\>\n\n> Notice one\n>\n> **Notice two**"
+        );
     }
 
     #[test]

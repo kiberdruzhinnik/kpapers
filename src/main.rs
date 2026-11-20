@@ -2,6 +2,7 @@ use axum::{
     Extension, Json, Router, middleware,
     routing::{delete, get, post, put},
 };
+use kpapers_api::{auth, db, feed_api, logging, proxy, proxy_settings, rss, scheduler};
 use std::{net::SocketAddr, process::ExitCode};
 
 #[tokio::main]
@@ -225,16 +226,6 @@ struct HealthResponse {
     status: &'static str,
 }
 
-mod auth;
-mod db;
-mod feed_api;
-mod logging;
-mod pdf_processing;
-mod providers;
-mod proxy;
-mod proxy_settings;
-mod rss;
-mod scheduler;
 #[cfg(test)]
 mod test_support;
 
