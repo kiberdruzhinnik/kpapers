@@ -8,7 +8,7 @@ const month: Month = {
   id: "month-1", feed_id: "feed-1", year: 2026, month: 11, provider: "fixture", source_url: "https://disk.yandex.ru/example",
   active: true, last_attempt_at: null, next_refresh_at: null, last_result: null, last_error: null,
 }
-const props = { feedId: "feed-1", active: true, onReviewMonth: vi.fn() }
+const props = { feedId: "feed-1", feedName: "Ada Lovelace", active: true, onReviewMonth: vi.fn() }
 const key = (feedId: string, year: number) => `kpapers.year.expanded.v1.${feedId}.${year}`
 
 beforeEach(() => {
@@ -18,6 +18,8 @@ beforeEach(() => {
     { feed_id: feedId, year: 2025, active: false },
   ])
   vi.spyOn(api, "months").mockResolvedValue([month])
+  vi.spyOn(api, "exportMonth").mockResolvedValue()
+  vi.spyOn(api, "exportYear").mockResolvedValue()
 })
 afterEach(() => vi.restoreAllMocks())
 
@@ -84,6 +86,30 @@ describe("feed year expansion", () => {
 })
 
 describe("month source details", () => {
+  it("exports a month and its year from their hierarchy actions", async () => {
+    const user = userEvent.setup()
+    render(<HierarchyManagement {...props} />)
+    await user.click(await screen.findByRole("button", { name: "Expand 2026" }))
+
+    const monthRow = within(document.getElementById("year-content-feed-1-2026")!).getByRole("article")
+    await user.click(within(monthRow).getByRole("button", { name: "Export Markdown" }))
+    expect(api.exportMonth).toHaveBeenCalledWith("month-1", "Ada Lovelace", 2026, 11)
+
+    await user.click(screen.getByRole("button", { name: "Actions for 2026" }))
+    await user.click(screen.getByRole("menuitem", { name: "Export Markdown" }))
+    expect(api.exportYear).toHaveBeenCalledWith("feed-1", 2026, "Ada Lovelace")
+  })
+
+  it("hides scoped export actions for an archived feed", async () => {
+    const user = userEvent.setup()
+    render(<HierarchyManagement {...props} active={false} />)
+    await user.click(await screen.findByRole("button", { name: "Expand 2026" }))
+    const monthRow = within(document.getElementById("year-content-feed-1-2026")!).getByRole("article")
+    expect(within(monthRow).queryByRole("button", { name: "Export Markdown" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Actions for 2026" }))
+    expect(screen.queryByRole("menuitem", { name: "Export Markdown" })).not.toBeInTheDocument()
+  })
+
   it("keeps the month summary scannable and discloses its source, refresh state, and scoped actions", async () => {
     const user = userEvent.setup()
     render(<HierarchyManagement {...props} />)

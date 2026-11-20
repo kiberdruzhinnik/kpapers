@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
-import { Archive, CalendarDays, ChevronDown, CheckCircle2, Clock3, FileSearch, FolderPlus, MoreHorizontal, RefreshCw, RotateCcw, Trash2 } from "lucide-react"
+import { Archive, CalendarDays, ChevronDown, CheckCircle2, Clock3, Download, FileSearch, FolderPlus, MoreHorizontal, RefreshCw, RotateCcw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Month, type Year } from "@/lib/api"
 import { formatLocalTimestamp } from "@/lib/datetime"
@@ -57,18 +57,33 @@ function ConfirmDialog({ confirmation, onClose, returnFocus }: { confirmation: C
   )
 }
 
-function MonthCard({ month, year, onChanged, onReview }: {
+function MonthCard({ month, year, feedName, feedActive, onChanged, onReview }: {
   month: Month
   year: Year
+  feedName: string
+  feedActive: boolean
   onChanged: () => Promise<void>
   onReview: (month: Month) => void
 }) {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [fetching, setFetching] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
-  const isActive = month.active && year.active
+  const isActive = month.active && year.active && feedActive
   const monthName = monthNames[month.month - 1] ?? `Month ${month.month}`
   const result = month.last_result?.toLowerCase()
+
+  async function exportMonth() {
+    setExporting(true)
+    try {
+      await api.exportMonth(month.id, feedName, year.year, month.month)
+      toast.success(`${monthName} Markdown export downloaded`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not export this month.")
+    } finally {
+      setExporting(false)
+    }
+  }
 
   async function queueRefresh() {
     try {
@@ -129,7 +144,7 @@ function MonthCard({ month, year, onChanged, onReview }: {
             <div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">{monthName}</h4><Badge variant={isActive ? "secondary" : "outline"}>{isActive ? "Active" : "Archived"}</Badge></div>
 
           </div>
-          <div className="flex flex-wrap items-center gap-1.5"><Badge variant={result === "success" ? "success" : result === "failure" ? "destructive" : "outline"}>{month.last_result ?? "Not refreshed"}</Badge><Button aria-controls={`source-${month.id}`} aria-expanded={sourceOpen} aria-label={`${sourceOpen ? "Hide" : "Show"} source details for ${monthName}`} onClick={() => setSourceOpen((open) => !open)} size="sm" variant="outline">{sourceOpen ? "Hide details" : "Source details"}</Button><Button onClick={() => onReview(month)} size="sm" variant="ghost">Review PDFs</Button></div>
+          <div className="flex flex-wrap items-center gap-1.5"><Badge variant={result === "success" ? "success" : result === "failure" ? "destructive" : "outline"}>{month.last_result ?? "Not refreshed"}</Badge><Button aria-controls={`source-${month.id}`} aria-expanded={sourceOpen} aria-label={`${sourceOpen ? "Hide" : "Show"} source details for ${monthName}`} onClick={() => setSourceOpen((open) => !open)} size="sm" variant="outline">{sourceOpen ? "Hide details" : "Source details"}</Button><Button onClick={() => onReview(month)} size="sm" variant="ghost">Review PDFs</Button>{isActive && <Button disabled={exporting} onClick={() => void exportMonth()} size="sm" variant="outline"><Download aria-hidden="true" />{exporting ? "Exporting…" : "Export Markdown"}</Button>}</div>
       </header>
       <div className="flex min-w-0 flex-col gap-4 border-t px-4 py-4 sm:px-5" hidden={!sourceOpen} id={`source-${month.id}`}>
             <a className="mt-1.5 block break-all text-xs text-primary underline-offset-4 hover:underline" href={month.source_url} rel="noreferrer" target="_blank">{month.source_url}</a>
@@ -155,9 +170,11 @@ function MonthCard({ month, year, onChanged, onReview }: {
   )
 }
 
-function YearCard({ year, feedId, onChanged, onReview }: {
+function YearCard({ year, feedId, feedName, feedActive, onChanged, onReview }: {
   year: Year
   feedId: string
+  feedName: string
+  feedActive: boolean
   onChanged: () => Promise<void>
   onReview: (month: Month) => void
 }) {
@@ -181,6 +198,7 @@ function YearCard({ year, feedId, onChanged, onReview }: {
   const [connecting, setConnecting] = useState(false)
   const [linking, setLinking] = useState(false)
   const [sourceUrl, setSourceUrl] = useState("")
+  const [exporting, setExporting] = useState(false)
 
   const reloadMonths = useCallback(async () => {
     setLoading(true)
@@ -224,6 +242,18 @@ function YearCard({ year, feedId, onChanged, onReview }: {
     catch (error) { toast.error(error instanceof Error ? error.message : "Could not queue year refresh.") }
   }
 
+  async function exportYear() {
+    setExporting(true)
+    try {
+      await api.exportYear(feedId, year.year, feedName)
+      toast.success(`${year.year} Markdown export downloaded`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not export this year.")
+    } finally {
+      setExporting(false)
+    }
+  }
+
   function requestArchive() {
     setConfirmation({
       title: `Archive ${year.year}?`,
@@ -255,7 +285,7 @@ function YearCard({ year, feedId, onChanged, onReview }: {
         <div className="flex flex-wrap gap-2">
           <Button aria-controls={regionId} aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${year.year}`} onClick={toggleExpanded} size="sm" variant="outline"><ChevronDown aria-hidden="true" className={cn(!expanded && "-rotate-90")} />{expanded ? "Collapse" : "Expand"}</Button>
           <DropdownMenu><DropdownMenuTrigger asChild><Button ref={actionsRef} aria-label={`Actions for ${year.year}`} size="icon" variant="ghost"><MoreHorizontal aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
-            {year.active ? <><DropdownMenuItem onSelect={() => void refreshYear()}><RefreshCw aria-hidden="true" />Refresh year</DropdownMenuItem><DropdownMenuItem onSelect={requestArchive}><Archive aria-hidden="true" />Archive year</DropdownMenuItem></> : <DropdownMenuItem onSelect={() => void restoreYear()}><RotateCcw aria-hidden="true" />Restore year</DropdownMenuItem>}
+            {year.active ? <>{feedActive && <DropdownMenuItem disabled={exporting} onSelect={() => void exportYear()}><Download aria-hidden="true" />Export Markdown</DropdownMenuItem>}<DropdownMenuItem onSelect={() => void refreshYear()}><RefreshCw aria-hidden="true" />Refresh year</DropdownMenuItem><DropdownMenuItem onSelect={requestArchive}><Archive aria-hidden="true" />Archive year</DropdownMenuItem></> : <DropdownMenuItem onSelect={() => void restoreYear()}><RotateCcw aria-hidden="true" />Restore year</DropdownMenuItem>}
             <DropdownMenuItem variant="destructive" onSelect={requestDelete}><Trash2 aria-hidden="true" />Delete year permanently</DropdownMenuItem>
           </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>
         </div>
@@ -272,7 +302,7 @@ function YearCard({ year, feedId, onChanged, onReview }: {
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between"><h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Configured months</h3>{loading && <span role="status" className="text-xs text-muted-foreground">Loading…</span>}</div>
           {months.length === 0 && !loading && <div className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">No months linked yet. Months without folders can stay empty.</div>}
-          {months.map((month) => <MonthCard key={month.id} month={month} onChanged={reloadMonths} onReview={onReview} year={year} />)}
+          {months.map((month) => <MonthCard key={month.id} feedActive={feedActive} feedName={feedName} month={month} onChanged={reloadMonths} onReview={onReview} year={year} />)}
         </div>
       </div>
       <ConfirmDialog confirmation={confirmation} onClose={() => setConfirmation(null)} returnFocus={actionsRef} />
@@ -280,8 +310,9 @@ function YearCard({ year, feedId, onChanged, onReview }: {
   )
 }
 
-export function HierarchyManagement({ feedId, active, onReviewMonth }: {
+export function HierarchyManagement({ feedId, feedName, active, onReviewMonth }: {
   feedId: string
+  feedName: string
   active: boolean
   onReviewMonth: (month: Month) => void
 }) {
@@ -333,7 +364,7 @@ export function HierarchyManagement({ feedId, active, onReviewMonth }: {
         </DialogContent></Dialog>
       </header>
       <div className="flex flex-col gap-3">
-        {years.map((year) => <YearCard key={`${feedId}-${year.year}`} feedId={feedId} onChanged={reloadYears} onReview={onReviewMonth} year={year} />)}
+        {years.map((year) => <YearCard key={`${feedId}-${year.year}`} feedActive={active} feedId={feedId} feedName={feedName} onChanged={reloadYears} onReview={onReviewMonth} year={year} />)}
         {years.length === 0 && !loading && <Empty><EmptyHeader><EmptyTitle>No years configured</EmptyTitle><EmptyDescription>Add a year to start linking source folders.</EmptyDescription></EmptyHeader></Empty>}
         {loading && <div aria-label="Loading years" className="rounded-xl border bg-background px-6 py-8 text-center text-sm text-muted-foreground">Loading years…</div>}
       </div>

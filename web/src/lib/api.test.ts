@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { ApiError, api, request } from "./api"
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe("management API request", () => {
   it("loads overview counts from the management summary endpoint", async () => {
@@ -25,6 +30,43 @@ describe("management API request", () => {
     await expect(api.reviewQueue(true)).resolves.toEqual([])
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/management/review-queue?archived=false", expect.objectContaining({ credentials: "same-origin" }))
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/management/review-queue?archived=true", expect.objectContaining({ credentials: "same-origin" }))
+  })
+
+  it("downloads feed, year, and month archives with same-origin credentials", async () => {
+    const createObjectURL = vi.fn().mockReturnValue("blob:export")
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL })
+    const downloadNames: string[] = []
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloadNames.push(this.download)
+    })
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response("zip-bytes", {
+      status: 200,
+      headers: { "Content-Type": "application/zip" },
+    })))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await api.exportFeed("feed/1", "Ada Lovelace")
+    await api.exportYear("feed/1", 2026, "Ada Lovelace")
+    await api.exportMonth("month-1", "Ada Lovelace", 2026, 2)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/management/feeds/feed%2F1/export", { credentials: "same-origin" })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/management/feeds/feed%2F1/years/2026/export", { credentials: "same-origin" })
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/management/months/month-1/export", { credentials: "same-origin" })
+    expect(click).toHaveBeenCalledTimes(3)
+    expect(createObjectURL).toHaveBeenCalledTimes(3)
+    expect(downloadNames).toEqual(["Ada-Lovelace.zip", "Ada-Lovelace-2026.zip", "Ada-Lovelace-2026-02.zip"])
+  })
+
+  it("reports export authentication failures without downloading a file", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click")
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })))
+
+    await expect(api.exportFeed("feed-1", "Ada")).rejects.toMatchObject({
+      status: 401,
+      message: "Your session has expired. Please sign in again.",
+    })
+    expect(click).not.toHaveBeenCalled()
   })
 
   it("sends same-origin credentials and JSON payloads", async () => {

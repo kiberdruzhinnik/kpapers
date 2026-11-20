@@ -2,7 +2,7 @@ use axum::{
     Extension, Json, Router, middleware,
     routing::{delete, get, post, put},
 };
-use kpapers_api::{auth, db, feed_api, logging, proxy, proxy_settings, rss, scheduler};
+use kpapers_api::{auth, db, export, feed_api, logging, proxy, proxy_settings, rss, scheduler};
 use std::{net::SocketAddr, process::ExitCode};
 
 #[tokio::main]
@@ -135,6 +135,10 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
             post(feed_api::force_feed_refresh),
         )
         .route(
+            "/api/management/feeds/{feed_id}/export",
+            get(export::export_feed),
+        )
+        .route(
             "/api/management/feeds/{feed_id}/years",
             get(feed_api::list_years).post(feed_api::create_year),
         )
@@ -155,6 +159,10 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
             post(feed_api::force_year_refresh),
         )
         .route(
+            "/api/management/feeds/{feed_id}/years/{year}/export",
+            get(export::export_year),
+        )
+        .route(
             "/api/management/feeds/{feed_id}/years/{year}/months",
             get(feed_api::list_months),
         )
@@ -165,6 +173,10 @@ fn app(pool: sqlx::SqlitePool, auth: auth::AuthConfig) -> Router {
         .route(
             "/api/management/months/{month_id}/documents",
             get(feed_api::list_documents),
+        )
+        .route(
+            "/api/management/months/{month_id}/export",
+            get(export::export_month),
         )
         .route(
             "/api/management/months/{month_id}",
@@ -294,6 +306,23 @@ mod tests {
         let response = app
             .clone()
             .oneshot(
+                Request::get("/api/management/feeds/private/export")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
                 Request::post("/api/login")
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from("{broken"))
@@ -390,6 +419,32 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         let feed = response_body(response).await;
         let feed_id = feed["id"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/management/feeds/{feed_id}/export"))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/zip");
+        assert!(
+            response.headers()[header::CONTENT_DISPOSITION]
+                .to_str()
+                .unwrap()
+                .starts_with("attachment; filename=\"Route-test.zip\"")
+        );
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        assert_eq!(
+            zip::ZipArchive::new(std::io::Cursor::new(bytes))
+                .unwrap()
+                .len(),
+            0
+        );
 
         let response = app
             .clone()

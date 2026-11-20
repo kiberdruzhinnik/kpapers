@@ -92,23 +92,52 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw new ApiError(0, "Unable to reach Kpapers. Check your connection and try again.")
   }
 
-  if (!response.ok) {
-    const message = response.status === 401
-      ? "Your session has expired. Please sign in again."
-      : response.status === 400
-        ? "Please check the information and try again."
-        : response.status === 404
-          ? "This item could not be found. It may have been removed."
-          : response.status >= 500
-            ? "Kpapers could not complete that request. Try again shortly."
-            : `Request failed (${response.status}).`
-    throw new ApiError(response.status, message)
-  }
+  if (!response.ok) throw new ApiError(response.status, errorMessage(response.status))
 
   if (response.status === 204) return undefined as T
   const contentType = response.headers.get("Content-Type") ?? ""
   if (contentType.includes("application/json")) return await response.json() as T
   return undefined as T
+}
+
+function errorMessage(status: number): string {
+  return status === 401
+    ? "Your session has expired. Please sign in again."
+    : status === 400
+      ? "Please check the information and try again."
+      : status === 404
+        ? "This item could not be found. It may have been removed."
+        : status >= 500
+          ? "Kpapers could not complete that request. Try again shortly."
+          : `Request failed (${status}).`
+}
+
+async function downloadRequest(path: string, filename: string): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(path, { credentials: "same-origin" })
+  } catch {
+    throw new ApiError(0, "Unable to reach Kpapers. Check your connection and try again.")
+  }
+  if (!response.ok) throw new ApiError(response.status, errorMessage(response.status))
+
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  link.style.display = "none"
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function zipFilename(value: string): string {
+  const safe = value
+    .normalize("NFKD")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return `${safe || "kpapers"}.zip`
 }
 
 const json = (method: string, payload?: unknown): RequestInit => ({
@@ -149,6 +178,9 @@ export const api = {
   restoreFeed: (id: string) => request<void>(`/api/management/feeds/${encodeURIComponent(id)}/restore`, json("POST")),
   deleteFeed: (id: string) => request<void>(`/api/management/feeds/${encodeURIComponent(id)}/permanent`, json("DELETE")),
   refreshFeed: (id: string) => request<QueuedRefresh>(`/api/management/feeds/${encodeURIComponent(id)}/refresh`, json("POST")),
+  exportFeed: (id: string, feedName: string) => downloadRequest(
+    `/api/management/feeds/${encodeURIComponent(id)}/export`, zipFilename(feedName),
+  ),
   years: (feedId: string) => request<Year[]>(`/api/management/feeds/${encodeURIComponent(feedId)}/years`),
   createYear: (feedId: string, year: number) => request<Year>(
     `/api/management/feeds/${encodeURIComponent(feedId)}/years`, json("POST", { year }),
@@ -164,6 +196,9 @@ export const api = {
   ),
   refreshYear: (feedId: string, year: number) => request<QueuedRefresh>(
     `/api/management/feeds/${encodeURIComponent(feedId)}/years/${year}/refresh`, json("POST"),
+  ),
+  exportYear: (feedId: string, year: number, feedName: string) => downloadRequest(
+    `/api/management/feeds/${encodeURIComponent(feedId)}/years/${year}/export`, zipFilename(`${feedName}-${year}`),
   ),
   months: (feedId: string, year: number) => request<Month[]>(
     `/api/management/feeds/${encodeURIComponent(feedId)}/years/${year}/months`,
@@ -182,6 +217,9 @@ export const api = {
   restoreMonth: (monthId: string) => request<void>(`/api/management/months/${encodeURIComponent(monthId)}/restore`, json("POST")),
   discoverMonth: (monthId: string) => request<DiscoveryResult>(`/api/management/months/${encodeURIComponent(monthId)}/discover`, json("POST")),
   refreshMonth: (monthId: string) => request<QueuedRefresh>(`/api/management/months/${encodeURIComponent(monthId)}/refresh`, json("POST")),
+  exportMonth: (monthId: string, feedName: string, year: number, month: number) => downloadRequest(
+    `/api/management/months/${encodeURIComponent(monthId)}/export`, zipFilename(`${feedName}-${year}-${String(month).padStart(2, "0")}`),
+  ),
   extractDocument: (id: string, force = false) => request<ExtractionResult>(
     `/api/management/documents/${encodeURIComponent(id)}/extract${force ? "?force=true" : ""}`,
     json("POST"),
