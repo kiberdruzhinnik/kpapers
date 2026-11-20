@@ -9,8 +9,9 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 29;
+const EXTRACTION_PIPELINE_REVISION: u32 = 30;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
+const LITERAL_MARKDOWN_DISCLAIMER: &str = "**это не инвестиционные рекомендации**";
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
 
@@ -1136,8 +1137,9 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
         .iter()
         .enumerate()
         .filter(|(index, line)| {
-            is_heading_candidate(line, body_size)
-                || is_opening_title_candidate(line, body_size, *index)
+            !is_literal_markdown_disclaimer(line)
+                && (is_heading_candidate(line, body_size)
+                    || is_opening_title_candidate(line, body_size, *index))
         })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
@@ -1202,6 +1204,22 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
             let in_quote = quote_left.is_some();
             let line_index = global_index;
             global_index += 1;
+            if is_literal_markdown_disclaimer(line) {
+                if !paragraph.is_empty() {
+                    blocks.push((
+                        "p".to_owned(),
+                        std::mem::take(&mut paragraph),
+                        paragraph_quote,
+                    ));
+                }
+                let mut runs = line.runs.clone();
+                for run in &mut runs {
+                    run.bold = true;
+                }
+                blocks.push(("p".to_owned(), runs, in_quote));
+                previous_line = Some(line);
+                continue;
+            }
             let heading_tag = if Some(line_index) == title_index {
                 Some("h1")
             } else if heading_candidates.contains(&line_index) {
@@ -1275,6 +1293,10 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
         }
     }
     output.join("\n")
+}
+
+fn is_literal_markdown_disclaimer(line: &StyledLine) -> bool {
+    line.text().trim() == LITERAL_MARKDOWN_DISCLAIMER
 }
 
 pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
@@ -1931,6 +1953,50 @@ mod tests {
     }
 
     #[test]
+    fn keeps_wrapped_crimsonanalytics_title_and_bold_literal_disclaimer() {
+        let mut disclaimer = line("", 12.0);
+        disclaimer.runs = vec![
+            StyledRun {
+                text: "**это не ".into(),
+                bold: false,
+                italic: false,
+            },
+            StyledRun {
+                text: "инвестиционные".into(),
+                bold: true,
+                italic: false,
+            },
+            StyledRun {
+                text: " рекомендации**".into(),
+                bold: false,
+                italic: false,
+            },
+        ];
+        let pages = vec![vec![
+            line("[Кофе с банкиром] Последствия поражения", 20.0),
+            line("Трампа и триумфа дипстейта: ИИ-активы,", 20.0),
+            line("Ормузский кризис, золото и заработки на", 20.0),
+            line("деклассированных элементах и спонсорах", 20.0),
+            line("Демпартии.", 20.0),
+            disclaimer,
+            line("Сразу к делу, коллеги!", 12.0),
+        ]];
+
+        assert_eq!(
+            lines_to_html(&pages),
+            "<h1>[Кофе с банкиром] Последствия поражения Трампа и триумфа дипстейта: ИИ-активы, Ормузский кризис, золото и заработки на деклассированных элементах и спонсорах Демпартии.</h1>\n<p><strong>**это не инвестиционные рекомендации**</strong></p>\n<p>Сразу к делу, коллеги!</p>"
+        );
+    }
+
+    #[test]
+    fn preserves_unmatched_asterisks_as_ordinary_text() {
+        assert_eq!(
+            lines_to_html(&[vec![line("An unmatched ** marker remains literal.", 12.0)]]),
+            "<p>An unmatched ** marker remains literal.</p>"
+        );
+    }
+
+    #[test]
     fn pdf_oxide_default_text_extraction_preserves_page_text_and_safe_html() {
         let extracted = super::extract_pdf(
             &simple_pdf_pages(&["First page text", "Second page text"]),
@@ -2039,7 +2105,8 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v30:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v28:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v27:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v26:pdf_oxide:{source}"));
