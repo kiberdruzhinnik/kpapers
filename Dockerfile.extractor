@@ -1,0 +1,31 @@
+FROM rust:1-bookworm AS builder
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY vendor/pdf_oxide ./vendor/pdf_oxide
+
+# Build dependencies separately so source-only edits can reuse the Cargo layer.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    mkdir -p src/bin \
+    && printf 'pub fn main() {}\n' > src/lib.rs \
+    && printf 'fn main() {}\n' > src/bin/kpapers-extract.rs \
+    && cargo build --release --locked --bin kpapers-extract \
+    && rm -rf src
+
+COPY src ./src
+COPY migrations ./migrations
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    find src -type f -exec touch {} + \
+    && cargo build --release --locked --bin kpapers-extract
+
+FROM debian:bookworm-slim AS runtime
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN groupadd --system --gid 568 app \
+    && useradd --system --create-home --uid 568 --gid app app \
+    && mkdir -p /output \
+    && chown app:app /output
+COPY --from=builder /app/target/release/kpapers-extract /usr/local/bin/kpapers-extract
+USER 568:568
+VOLUME ["/output"]
+ENTRYPOINT ["/usr/local/bin/kpapers-extract"]

@@ -88,8 +88,8 @@ pub(crate) fn valid_session_cookie(cookie: &str, signing_key: &[u8], now: u64) -
         .is_some_and(|e| e > now)
 }
 
-#[cfg(test)]
-pub(crate) fn test_auth_config(username: &str, password: &str) -> AuthConfig {
+#[doc(hidden)]
+pub fn test_auth_config(username: &str, password: &str) -> AuthConfig {
     use argon2::password_hash::{PasswordHasher, SaltString};
     let salt = SaltString::from_b64("c2FsdHNhbHQ").unwrap();
     let password_hash = Argon2::default()

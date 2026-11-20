@@ -67,6 +67,7 @@ libfuzzer_sys::fuzz_target!(|data: &[u8]| {
             let mut extracted = pdf_processing::ExtractedText {
                 full_text: normalized.clone(),
                 html: String::new(),
+                markdown: String::new(),
                 first_page: normalized,
                 page_count: 1,
             };

@@ -83,7 +83,7 @@ pub async fn list_root_pdfs(
         .body
         .list
         .into_iter()
-        .filter(|entry| entry.kind == "file" && entry.name.to_ascii_lowercase().ends_with(".pdf"))
+        .filter(is_root_pdf)
         .map(|entry| {
             let download_url = format!(
                 "{}/{}",
@@ -106,6 +106,10 @@ pub async fn list_root_pdfs(
             }
         })
         .collect())
+}
+
+fn is_root_pdf(entry: &Entry) -> bool {
+    entry.kind == "file" && entry.name.to_ascii_lowercase().ends_with(".pdf")
 }
 
 pub async fn download(
@@ -164,6 +168,22 @@ mod tests {
         assert_eq!(minimal.body.list[0].size, None);
         assert_eq!(minimal.body.list[0].mtime, None);
         assert_eq!(minimal.body.list[0].hash, None);
+    }
+
+    #[test]
+    fn root_listing_keeps_direct_pdf_files_and_ignores_directories_and_other_files() {
+        let response: ApiResponse<Folder> = serde_json::from_str(
+            r#"{"body":{"list":[{"type":"file","name":"article.pdf","weblink":"root/article.pdf"},{"type":"dir","name":"nested.pdf","weblink":"root/nested"},{"type":"file","name":"notes.txt","weblink":"root/notes.txt"}]}}"#,
+        )
+        .unwrap();
+        let filenames = response
+            .body
+            .list
+            .iter()
+            .filter(|entry| is_root_pdf(entry))
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(filenames, ["article.pdf"]);
     }
 
     #[test]

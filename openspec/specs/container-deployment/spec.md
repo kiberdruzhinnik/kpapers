@@ -22,19 +22,27 @@ The web container SHALL require a valid `API_URL` environment variable identifyi
 - **THEN** startup reports a clear configuration error and Nginx does not start
 
 ### Requirement: Publish application container images
-The project SHALL publish publicly pullable API and web container images to GitHub Container Registry from the repository's GitHub Actions workflow.
+The project SHALL publish publicly pullable API, web, and standalone PDF extractor container images to GitHub Container Registry from the repository's GitHub Actions workflow. The extractor image SHALL support both `linux/amd64` and `linux/arm64`.
 
 #### Scenario: Build from the default branch
 - **WHEN** a commit is pushed to the default branch
-- **THEN** the workflow builds and publishes the API and web images with a stable default-branch tag and a commit-specific tag
+- **THEN** the workflow builds and publishes the API, web, and extractor images with a stable default-branch tag and a commit-specific tag
 
 #### Scenario: Build from a version tag
 - **WHEN** a version tag is pushed
-- **THEN** the workflow publishes the API and web images with that version tag
+- **THEN** the workflow publishes the API, web, and extractor images with that version tag
 
 #### Scenario: Pull published images without authentication
-- **WHEN** a deployment host pulls a published API or web image from GHCR
+- **WHEN** a deployment host pulls a published API, web, or extractor image from GHCR
 - **THEN** the image is publicly accessible without registry credentials
+
+#### Scenario: Pull the extractor image on amd64
+- **WHEN** a host running `linux/amd64` pulls a published extractor image tag
+- **THEN** the container registry provides an image that runs on that architecture
+
+#### Scenario: Pull the extractor image on arm64
+- **WHEN** a host running `linux/arm64` pulls a published extractor image tag
+- **THEN** the container registry provides an image that runs on that architecture
 
 ### Requirement: Provide a pdf_oxide TrueNAS Compose deployment example
 The project SHALL provide a Compose example that deploys only the API and web images from GHCR and loads operator configuration from a colocated `.env` file. The web service SHALL join the stack's default network and an externally managed `npm` network. The API SHALL extract PDF text with `pdf_oxide` in-process, without a Marker worker or Pdfium native runtime.

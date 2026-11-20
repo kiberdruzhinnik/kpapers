@@ -59,12 +59,7 @@ pub async fn list_root_pdfs(
             .json()
             .await?;
         let count = page.embedded.items.len() as u64;
-        for item in page
-            .embedded
-            .items
-            .into_iter()
-            .filter(|i| i.kind == "file" && i.name.to_ascii_lowercase().ends_with(".pdf"))
-        {
+        for item in page.embedded.items.into_iter().filter(is_root_pdf) {
             let file_url = if let Some(url) = item.file.clone() {
                 url
             } else {
@@ -103,6 +98,10 @@ pub async fn list_root_pdfs(
         }
     }
     Ok(found)
+}
+
+fn is_root_pdf(item: &Resource) -> bool {
+    item.kind == "file" && item.name.to_ascii_lowercase().ends_with(".pdf")
 }
 
 pub async fn download(
@@ -157,6 +156,22 @@ mod tests {
         assert_eq!(item.name, "article.pdf");
         assert_eq!(item.size, Some(12));
         assert_eq!(item.resource_id.as_deref(), Some("id-1"));
+    }
+
+    #[test]
+    fn root_listing_keeps_direct_pdf_files_and_ignores_directories_and_other_files() {
+        let page: ResourcePage = serde_json::from_str(
+            r#"{"_embedded":{"total":3,"items":[{"type":"file","path":"disk:/article.pdf","name":"article.pdf","file":"https://storage.yandex.net/article"},{"type":"dir","path":"disk:/nested","name":"nested.pdf"},{"type":"file","path":"disk:/notes.txt","name":"notes.txt","file":"https://storage.yandex.net/notes"}]}}"#,
+        )
+        .unwrap();
+        let filenames = page
+            .embedded
+            .items
+            .iter()
+            .filter(|item| is_root_pdf(item))
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(filenames, ["article.pdf"]);
     }
 
     #[test]
