@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod db;
+pub mod export;
 pub mod feed_api;
 pub mod logging;
 pub mod pdf_processing;

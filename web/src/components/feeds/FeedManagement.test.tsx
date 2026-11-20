@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import App from "@/App"
+import { api } from "@/lib/api"
 
 type TestFeed = {
   id: string
@@ -329,6 +330,19 @@ describe("feed management workflows", () => {
     const dialog = screen.getByRole("alertdialog")
     await user.click(within(dialog).getByRole("button", { name: "Delete permanently" }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/management/feeds/feed-1/permanent", expect.objectContaining({ method: "DELETE" })))
+  })
+
+  it("offers a feed Markdown ZIP export from the feed actions", async () => {
+    installFeedApi([feed])
+    vi.spyOn(api, "exportFeed").mockResolvedValue()
+    const user = userEvent.setup()
+    render(<App />)
+    await openFeeds(user)
+
+    await user.click(screen.getByRole("button", { name: "More actions for Ada Lovelace" }))
+    await user.click(screen.getByRole("menuitem", { name: "Export Markdown" }))
+
+    expect(api.exportFeed).toHaveBeenCalledWith("feed-1", "Ada Lovelace")
   })
 
   it("links a month, displays refresh metadata, and supports scoped refresh and review", async () => {

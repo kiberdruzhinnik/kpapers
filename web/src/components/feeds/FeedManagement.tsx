@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent } from "react"
-import { Archive, ArrowLeft, Check, ChevronRight, Copy, FileText, MoreHorizontal, Plus, RefreshCw, Rss, Trash2, Undo2 } from "lucide-react"
+import { Archive, ArrowLeft, Check, ChevronRight, Copy, Download, FileText, MoreHorizontal, Plus, RefreshCw, Rss, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Feed, type Month } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
@@ -117,6 +117,7 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
 }) {
   const [editing, setEditing] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [copied, setCopied] = useState(false)
   const rssUrl = `${window.location.origin}/feeds/${feed.id}`
 
@@ -141,6 +142,18 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
       toast.error(error instanceof Error ? error.message : "Could not queue refresh.")
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  async function exportFeed() {
+    setExporting(true)
+    try {
+      await api.exportFeed(feed.id, feed.display_name)
+      toast.success("Feed Markdown export downloaded")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not export this feed.")
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -179,7 +192,7 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
             <Button onClick={async () => { try { await api.restoreFeed(feed.id); await onSaved(); toast.success("Feed restored") } catch (error) { toast.error(error instanceof Error ? error.message : "Could not restore feed.") } }} variant="outline"><Undo2 aria-hidden="true" /> Restore</Button>
             <Button onClick={() => onRequestConfirm({ kind: "delete", feed })} variant="destructive"><Trash2 aria-hidden="true" /> Delete permanently</Button>
           </div>}
-          {feed.active && <DropdownMenu><DropdownMenuTrigger asChild><Button aria-label={`More actions for ${feed.display_name}`} size="icon" variant="outline"><MoreHorizontal aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>{feed.active && <><DropdownMenuItem disabled={refreshing} onSelect={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh feed</DropdownMenuItem><DropdownMenuItem variant="destructive" onSelect={() => onRequestConfirm({ kind: "archive", feed })}><Archive aria-hidden="true" />Archive feed</DropdownMenuItem></>}</DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
+          {feed.active && <DropdownMenu><DropdownMenuTrigger asChild><Button aria-label={`More actions for ${feed.display_name}`} size="icon" variant="outline"><MoreHorizontal aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem disabled={exporting} onSelect={() => void exportFeed()}><Download aria-hidden="true" />Export Markdown</DropdownMenuItem><DropdownMenuItem disabled={refreshing} onSelect={() => void refresh()}><RefreshCw aria-hidden="true" />Refresh feed</DropdownMenuItem><DropdownMenuItem variant="destructive" onSelect={() => onRequestConfirm({ kind: "archive", feed })}><Archive aria-hidden="true" />Archive feed</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
         </CardHeader>
         <CardContent className="border-t pt-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -191,7 +204,7 @@ function FeedDetails({ feed, onSaved, onRequestConfirm, onReviewMonth }: {
 
       <FeedProxySettings feedId={feed.id} key={feed.id} />
 
-      <HierarchyManagement active={feed.active} feedId={feed.id} onReviewMonth={onReviewMonth} />
+      <HierarchyManagement active={feed.active} feedId={feed.id} feedName={feed.display_name} onReviewMonth={onReviewMonth} />
 
       <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
         <span>Feed ID <code className="ml-1 break-all text-[11px] text-foreground/70">{feed.id}</code></span>
