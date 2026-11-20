@@ -89,7 +89,11 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, o
           ? initialSelection.monthId
           : items[0]?.id ?? ""
       setMonthId(nextMonthId)
-      setLoading(Boolean(nextMonthId))
+      // The document request can finish before this hierarchy request. Keep
+      // its completed state when the route already points at the validated
+      // month; otherwise the UI would show a permanent loading state without
+      // triggering another document request.
+      setLoading((current) => Boolean(nextMonthId) && (current || nextMonthId !== monthId))
       if (nextMonthId && initialSelection?.monthId !== nextMonthId) onSelectionChange?.({ feedId, year, monthId: nextMonthId })
     }).catch((error: unknown) => {
       if (mounted) toast.error(error instanceof Error ? error.message : "Could not load feed months.")

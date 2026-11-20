@@ -142,6 +142,26 @@ describe("PDF review", () => {
     expect(screen.getByRole("combobox", { name: "Month" })).toHaveValue("month-2")
     expect(screen.getByText("Grace Hopper · 2025 · December")).toBeInTheDocument()
   })
+
+  it("keeps documents visible when they load before the selected month is validated", async () => {
+    const fetchMock = installDocumentsApi()
+    const original = fetchMock.getMockImplementation()!
+    let resolveMonths!: (result: Response) => void
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/management/feeds/feed-1/years/2026/months") {
+        return new Promise((resolve) => { resolveMonths = resolve })
+      }
+      return original(input, init)
+    })
+
+    renderReview()
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/management/months/month-1/documents")).toBe(true))
+    await screen.findByRole("heading", { name: "research-paper.pdf" })
+    resolveMonths(response([selectedMonth]))
+
+    expect(await screen.findByRole("heading", { name: "research-paper.pdf" })).toBeInTheDocument()
+    expect(screen.queryByText("Loading documents…")).not.toBeInTheDocument()
+  })
 })
 
 describe("classification and extraction presentation", () => {
