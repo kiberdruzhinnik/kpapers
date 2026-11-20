@@ -25,7 +25,7 @@ For command usage, run `kpapers-extract --help`.
 
 ## Run the published Docker image
 
-The release workflow publishes `kpapers-extractor` to GitHub Container Registry for `linux/amd64` and `linux/arm64`. Replace `<OWNER>` with the repository owner and mount a writable host directory at `/output`:
+The release workflow publishes `kpapers-extractor` to GitHub Container Registry for `linux/amd64` only. Replace `<OWNER>` with the repository owner and mount a writable host directory at `/output`:
 
 ```sh
 mkdir -p ./extracted

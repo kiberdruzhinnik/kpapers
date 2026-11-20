@@ -34,9 +34,6 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for multi-platform builds
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -123,13 +120,13 @@ jobs:
             docker push "$tag"
           done <<< "$IMAGE_TAGS"
 
-      - name: Publish multi-platform extractor image
+      - name: Publish amd64 extractor image
         if: success() && matrix.image == 'kpapers-extractor'
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

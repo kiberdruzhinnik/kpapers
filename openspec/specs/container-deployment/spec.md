@@ -22,7 +22,7 @@ The web container SHALL require a valid `API_URL` environment variable identifyi
 - **THEN** startup reports a clear configuration error and Nginx does not start
 
 ### Requirement: Publish application container images
-The project SHALL publish publicly pullable API, web, and standalone PDF extractor container images to GitHub Container Registry from the repository's GitHub Actions workflow. The extractor image SHALL support both `linux/amd64` and `linux/arm64`.
+The project SHALL publish publicly pullable API, web, and standalone PDF extractor container images to GitHub Container Registry from the repository's GitHub Actions workflow. All published images SHALL support `linux/amd64` only.
 
 #### Scenario: Build from the default branch
 - **WHEN** a commit is pushed to the default branch
@@ -42,7 +42,7 @@ The project SHALL publish publicly pullable API, web, and standalone PDF extract
 
 #### Scenario: Pull the extractor image on arm64
 - **WHEN** a host running `linux/arm64` pulls a published extractor image tag
-- **THEN** the container registry provides an image that runs on that architecture
+- **THEN** the container registry does not provide an image variant for that architecture
 
 ### Requirement: Provide a pdf_oxide TrueNAS Compose deployment example
 The project SHALL provide a Compose example that deploys only the API and web images from GHCR and loads operator configuration from a colocated `.env` file. The web service SHALL join the stack's default network and an externally managed `npm` network. The API SHALL extract PDF text with `pdf_oxide` in-process, without a Marker worker or Pdfium native runtime.
