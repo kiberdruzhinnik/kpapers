@@ -2,6 +2,8 @@
 """End-to-end feed publication and Miniflux reader contract."""
 
 import http.cookiejar
+import base64
+import io
 import json
 import os
 import time
@@ -9,6 +11,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
+import zipfile
 from html.parser import HTMLParser
 
 
@@ -21,15 +24,24 @@ ARTICLE_ALPHA_LEAD = "Сегодня для нас нет ничего акту�
 
 
 class SafeMarkup(HTMLParser):
-    allowed = {"p", "br", "h1", "h2", "h3", "strong", "em", "ul", "ol", "li", "blockquote"}
+    allowed = {"p", "br", "h1", "h2", "h3", "strong", "em", "ul", "ol", "li", "blockquote", "img"}
 
     def handle_starttag(self, tag, attrs):
         assert tag in self.allowed, f"unexpected HTML tag: {tag}"
-        assert not attrs, f"unexpected HTML attributes: {attrs}"
+        if tag == "img":
+            image_attrs = dict(attrs)
+            assert set(image_attrs) == {"src", "alt", "width", "height", "style"}, attrs
+            assert image_attrs["src"].startswith("data:image/jpeg;base64,"), image_attrs
+            base64.b64decode(image_attrs["src"].split(",", 1)[1], validate=True)
+            assert image_attrs["alt"] == "", image_attrs
+            assert 0 < int(image_attrs["width"]) <= 1200, image_attrs
+            assert int(image_attrs["height"]) > 0, image_attrs
+            assert image_attrs["style"] == "max-width:100%;height:auto", image_attrs
+        else:
+            assert not attrs, f"unexpected HTML attributes: {attrs}"
 
     def handle_startendtag(self, tag, attrs):
-        assert tag in self.allowed, f"unexpected HTML tag: {tag}"
-        assert not attrs, f"unexpected HTML attributes: {attrs}"
+        self.handle_starttag(tag, attrs)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -162,6 +174,12 @@ def main():
         assert "куплено на" not in beta_html.lower(), beta_html[:1200]
         assert "skladchik.org" not in beta_html.lower(), beta_html[:1200]
         assert not __import__("re").search(r"<p>\s*\d+\s*</p>", beta_html), "standalone page number leaked into reference content"
+        image_tags = list(__import__("re").finditer(r'<img src="data:image/jpeg;base64,[^"]+"[^>]*>', beta_html))
+        assert len(image_tags) == 2, f"expected both inline PDF images in RSS: {len(image_tags)}"
+        first_context = beta_html.find("триаду:")
+        second_context = beta_html.find("горыныч риторики:")
+        assert first_context < image_tags[0].start() < beta_html.find("Тем не менее", image_tags[0].end())
+        assert second_context < image_tags[1].start() < beta_html.find("То есть обозначаются", image_tags[1].end())
         print(f"Live reference PDF first 1,200 HTML chars: {beta_html[:1200]}")
     else:
         assert beta_html.startswith("<h1><strong>[Философское] «Старые деньги» — FAQ: как правильно считать дивиденды, «бессмертные» портфели и стоицизм</strong></h1>"), beta_html
@@ -187,6 +205,22 @@ def main():
     for item in items:
         SafeMarkup().feed(item.findtext("description") or "")
         SafeMarkup().feed(item.findtext(CONTENT_NS) or "")
+
+    if reference_pdf_test:
+        _, export_bytes = request(f"{APP}/api/management/feeds/{feed_id}/export", opener=app_client)
+        with zipfile.ZipFile(io.BytesIO(export_bytes)) as archive:
+            image_markdown = [
+                archive.read(name).decode("utf-8")
+                for name in archive.namelist()
+                if name.endswith(".md") and b"data:image/jpeg;base64," in archive.read(name)
+            ]
+        assert len(image_markdown) == 1, f"expected one image-bearing Markdown entry, got {len(image_markdown)}"
+        markdown_images = image_markdown[0]
+        first_image = markdown_images.find("data:image/jpeg;base64,")
+        second_image = markdown_images.find("data:image/jpeg;base64,", first_image + 1)
+        assert first_image >= 0 and second_image > first_image
+        assert markdown_images.find("триаду:") < first_image < markdown_images.find("Тем не менее", first_image)
+        assert markdown_images.find("горыныч риторики:") < second_image < markdown_images.find("То есть обозначаются", second_image)
 
     basic = "Basic " + __import__("base64").b64encode(
         f"{os.environ['MINIFLUX_USERNAME']}:{os.environ['MINIFLUX_PASSWORD']}".encode()
@@ -224,12 +258,14 @@ def main():
     assert "<p>это не инвестиционные рекомендации</p>" in alpha["content"], alpha["content"][:1200]
     assert "Fixture article alpha" in alpha["content"]
     assert alpha["url"] == expected_links["article-alpha"]
+    if reference_pdf_test:
+        beta_entry = next(entry for entry in entries if entry["title"] == beta_title)
+        assert beta_entry["content"].count('<img src="data:image/jpeg;base64,') == 2
+        assert beta_entry["content"].find("триаду:") < beta_entry["content"].find("data:image/jpeg;base64,")
 
     # Change bytes under the same fixture filename/provider identity, then re-ingest.
     import subprocess
     subprocess.run(["python", "/tests/e2e/generate_fixtures.py", "article-alpha.pdf"], check=True, env={**os.environ, "FIXTURE_ROOT": "/fixtures"})
-    if reference_pdf_test:
-        os.unlink(f"/fixtures/current-month/{beta_filename}")
     _, discovery = request(f"{APP}/api/management/months/{month_id}/discover", method="POST", opener=app_client)
     assert discovery["discovered_pdfs"] == 4
     _, documents = request(f"{APP}/api/management/months/{month_id}/documents", opener=app_client)

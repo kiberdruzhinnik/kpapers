@@ -24159,11 +24159,14 @@ impl PdfDocument {
         };
 
         // Parse content stream with image-only fast path (skips BT/ET text blocks)
-        let operators = match parse_content_stream_images_only(&content_data) {
+        // The images-only scanner can miss a valid `Do` operator adjacent to
+        // a text operator (for example `ET/Im0 Do`). Prefer the general parser
+        // and retain the specialized parser as a tolerant fallback.
+        let operators = match crate::content::parse_content_stream(&content_data) {
             Ok(ops) => ops,
-            Err(_) => {
-                // If content stream parsing fails, return empty
-                return Ok(Vec::new());
+            Err(_) => match parse_content_stream_images_only(&content_data) {
+                Ok(ops) => ops,
+                Err(_) => return Ok(Vec::new()),
             },
         };
 

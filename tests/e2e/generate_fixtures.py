@@ -134,6 +134,9 @@ def main() -> None:
     # The cover ad is not a content page, so article page labels start at 1.
     first_content_page = [[("1", 12, "F1")]]
     (ROOT / "article-alpha.pdf").write_bytes(pdf_pages([first_page_ad, first_content_page, typography_page, ad]))
+    if changed == "article-alpha.pdf":
+        return
+
     sponsr_page = [
         [("1", 12, "F1")],
         [("sponsr", 24, "F2")],
