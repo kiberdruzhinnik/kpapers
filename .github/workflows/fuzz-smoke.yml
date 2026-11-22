@@ -29,6 +29,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Install PDF renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils
+
       - name: Set up nightly Rust with fuzz components
         uses: dtolnay/rust-toolchain@master
         with:
