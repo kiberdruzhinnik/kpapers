@@ -366,3 +366,14 @@ The protected operator interface SHALL export successfully parsed entries that a
 #### Scenario: Export a scope with no eligible entries
 - **WHEN** an operator exports a scope with no eligible entries
 - **THEN** the export succeeds with a valid ZIP containing no Markdown entry files
+
+### Requirement: Include inline PDF images in Markdown exports
+Markdown ZIP exports SHALL include successfully processed PDF images inline near their associated article text, without depending on external image files.
+
+#### Scenario: Export an article with images
+- **WHEN** an eligible exported entry contains successfully processed images
+- **THEN** its Markdown file embeds each image as inline image data near the corresponding text in reading order
+
+#### Scenario: Export image processing omitted an image
+- **WHEN** an image could not be safely converted or embedded during PDF processing
+- **THEN** the Markdown file includes the remaining article content without a broken or external image reference
