@@ -23,6 +23,9 @@ FROM debian:bookworm-slim AS runtime
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN groupadd --system --gid 568 app \
     && useradd --system --create-home --uid 568 --gid app app \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /output \
     && chown app:app /output
 COPY --from=builder /app/target/release/kpapers-extract /usr/local/bin/kpapers-extract

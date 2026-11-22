@@ -54,9 +54,16 @@ if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
 fi
 chmod -R a+rX "$fixture_dir"
 if [[ "${E2E_SKIP_APP_BUILD:-false}" == true ]]; then
-  "${DOCKER[@]}" image inspect kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || die 'Shared E2E images are missing; run the integration orchestrator without E2E_SKIP_APP_BUILD.'
+  if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
+    "${DOCKER[@]}" image inspect kpapers-api:e2e kpapers-web:e2e kpapers-browser:e2e >/dev/null 2>&1 || die 'Shared E2E images are missing; run the integration orchestrator without E2E_SKIP_APP_BUILD.'
+  else
+    "${DOCKER[@]}" image inspect kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || die 'Shared E2E images are missing; run the integration orchestrator without E2E_SKIP_APP_BUILD.'
+  fi
 else
   compose build api web
+  if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
+    compose build miniflux-browser
+  fi
 fi
 password_hash="$(printf '%s\n' "$operator_password" | compose run --rm --no-deps -T -i api /usr/local/bin/kpapers-api --hash-password)"
 [[ "$password_hash" == \$argon2* ]] || die 'API did not return a valid password hash.'
@@ -73,3 +80,7 @@ env_file.write_text("\n".join(
 ) + "\n")
 PY
 compose up --no-build --abort-on-container-exit --exit-code-from e2e e2e
+if [[ -n "${E2E_REFERENCE_PDF:-}" ]]; then
+  compose up -d miniflux-db miniflux
+  compose run --rm --no-deps miniflux-browser
+fi

@@ -8,9 +8,9 @@ cleanup() {
   result=$?
   if [[ "$KEEP_IMAGES" != true ]]; then
     if docker info >/dev/null 2>&1; then
-      docker image rm kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || true
+      docker image rm kpapers-api:e2e kpapers-web:e2e kpapers-browser:e2e >/dev/null 2>&1 || true
     elif sudo -n docker info >/dev/null 2>&1; then
-      sudo -n docker image rm kpapers-api:e2e kpapers-web:e2e >/dev/null 2>&1 || true
+      sudo -n docker image rm kpapers-api:e2e kpapers-web:e2e kpapers-browser:e2e >/dev/null 2>&1 || true
     fi
   fi
   return "$result"

@@ -1,5 +1,12 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
+use image::{DynamicImage, ImageEncoder, codecs::jpeg::JpegEncoder};
 use pdf_oxide::PdfDocument;
+use pdf_oxide::extractors::PdfImage;
+use pdf_oxide::geometry::Rect;
 use pdf_oxide::layout::TextLine;
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug)]
 pub struct ExtractedText {
@@ -10,11 +17,17 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 30;
+const EXTRACTION_PIPELINE_REVISION: u32 = 33;
+const MAX_PDF_IMAGE_COUNT: usize = 100;
+const MAX_PDF_IMAGE_DIMENSION: u32 = 20_000;
+const MAX_PDF_IMAGE_PIXELS: u64 = 8_000_000;
+const MAX_PDF_TOTAL_IMAGE_PIXELS: u64 = 32_000_000;
+const MAX_PDF_INLINE_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 const TRAILING_DISCLAIMER_SEARCH_PAGES: usize = 3;
 const LITERAL_MARKDOWN_DISCLAIMER: &str = "**это не инвестиционные рекомендации**";
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
+static VECTOR_RENDER_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -29,6 +42,13 @@ struct StyledLine {
     size: f32,
     gap_before: f32,
     left: f32,
+    y: f32,
+}
+
+#[derive(Clone, Debug)]
+struct PositionedImage {
+    y: Option<f32>,
+    html: String,
 }
 
 impl StyledLine {
@@ -59,6 +79,10 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
     }
 
     let mut pages = Vec::with_capacity(page_count);
+    let mut page_images = Vec::with_capacity(page_count);
+    let mut image_count = 0usize;
+    let mut total_image_pixels = 0u64;
+    let mut total_inline_bytes = 0usize;
     for page_index in 0..page_count {
         let lines = document.extract_text_lines(page_index).map_err(|error| {
             format!(
@@ -67,9 +91,388 @@ pub fn extract_pdf(bytes: &[u8], maximum_bytes: usize) -> Result<ExtractedText, 
             )
         })?;
         pages.push(text_lines_to_styled_lines(lines));
+
+        let mut positioned_images = Vec::new();
+        match document.extract_images(page_index) {
+            Ok(images) => {
+                for (image_index, image) in images.into_iter().enumerate() {
+                    if image_count >= MAX_PDF_IMAGE_COUNT {
+                        tracing::warn!(
+                            page = page_index + 1,
+                            "PDF image count limit reached; later images are omitted"
+                        );
+                        break;
+                    }
+                    image_count += 1;
+                    let width = image.width();
+                    let height = image.height();
+                    let pixels = u64::from(width).saturating_mul(u64::from(height));
+                    if width == 0
+                        || height == 0
+                        || width > MAX_PDF_IMAGE_DIMENSION
+                        || height > MAX_PDF_IMAGE_DIMENSION
+                        || pixels > MAX_PDF_IMAGE_PIXELS
+                        || total_image_pixels.saturating_add(pixels) > MAX_PDF_TOTAL_IMAGE_PIXELS
+                    {
+                        tracing::warn!(
+                            page = page_index + 1,
+                            image = image_index + 1,
+                            width,
+                            height,
+                            "PDF image exceeds decoding limits; image omitted"
+                        );
+                        continue;
+                    }
+                    total_image_pixels = total_image_pixels.saturating_add(pixels);
+                    match optimize_pdf_image(&image) {
+                        Ok((uri, output_width, output_height)) => {
+                            let Some(image_html) =
+                                inline_jpeg_image_html(&uri, output_width, output_height)
+                            else {
+                                tracing::warn!(
+                                    page = page_index + 1,
+                                    image = image_index + 1,
+                                    "PDF image did not match the safe inline markup policy; image omitted"
+                                );
+                                continue;
+                            };
+                            let inline_size = image_html.len();
+                            if total_inline_bytes.saturating_add(inline_size)
+                                > MAX_PDF_INLINE_IMAGE_BYTES
+                            {
+                                tracing::warn!(
+                                    page = page_index + 1,
+                                    image = image_index + 1,
+                                    inline_size,
+                                    "PDF inline image byte limit reached; image omitted"
+                                );
+                                continue;
+                            }
+                            total_inline_bytes += inline_size;
+                            positioned_images.push(PositionedImage {
+                                y: image.bbox().map(|bbox| bbox.y + bbox.height / 2.0),
+                                html: image_html,
+                            });
+                        }
+                        Err(error) => {
+                            tracing::warn!(page = page_index + 1, image = image_index + 1, %error, "PDF image processing failed; image omitted")
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(page = page_index + 1, %error, "PDF page image extraction failed; continuing with text")
+            }
+        }
+        if positioned_images.is_empty() {
+            for (figure_index, (bbox, image)) in
+                extract_vector_figures(bytes, &document, page_index, &pages[page_index])
+                    .into_iter()
+                    .enumerate()
+            {
+                if image_count >= MAX_PDF_IMAGE_COUNT {
+                    tracing::warn!(
+                        page = page_index + 1,
+                        "PDF image count limit reached; later images are omitted"
+                    );
+                    break;
+                }
+                image_count += 1;
+                let pixels = u64::from(image.width()).saturating_mul(u64::from(image.height()));
+                if image.width() == 0
+                    || image.height() == 0
+                    || image.width() > MAX_PDF_IMAGE_DIMENSION
+                    || image.height() > MAX_PDF_IMAGE_DIMENSION
+                    || pixels > MAX_PDF_IMAGE_PIXELS
+                    || total_image_pixels.saturating_add(pixels) > MAX_PDF_TOTAL_IMAGE_PIXELS
+                {
+                    tracing::warn!(
+                        page = page_index + 1,
+                        image = figure_index + 1,
+                        "Rendered PDF figure exceeds decoding limits; image omitted"
+                    );
+                    continue;
+                }
+                total_image_pixels = total_image_pixels.saturating_add(pixels);
+                match optimize_decoded_image(image) {
+                    Ok((uri, width, height)) => {
+                        let Some(image_html) = inline_jpeg_image_html(&uri, width, height) else {
+                            continue;
+                        };
+                        let inline_size = image_html.len();
+                        if total_inline_bytes.saturating_add(inline_size)
+                            > MAX_PDF_INLINE_IMAGE_BYTES
+                        {
+                            tracing::warn!(
+                                page = page_index + 1,
+                                image = figure_index + 1,
+                                inline_size,
+                                "PDF inline image byte limit reached; rendered figure omitted"
+                            );
+                            continue;
+                        }
+                        total_inline_bytes += inline_size;
+                        positioned_images.push(PositionedImage {
+                            y: Some(bbox.y + bbox.height / 2.0),
+                            html: image_html,
+                        });
+                    }
+                    Err(error) => {
+                        tracing::warn!(page = page_index + 1, image = figure_index + 1, %error, "PDF vector figure rendering failed; figure omitted")
+                    }
+                }
+            }
+        }
+        page_images.push(positioned_images);
     }
 
-    finalize_pages(pages, page_count)
+    finalize_pages_with_images(pages, page_images, page_count)
+}
+
+fn optimize_pdf_image(image: &PdfImage) -> Result<(String, u32, u32), String> {
+    let width = image.width();
+    let height = image.height();
+    let pixels = u64::from(width).saturating_mul(u64::from(height));
+    if width == 0
+        || height == 0
+        || width > MAX_PDF_IMAGE_DIMENSION
+        || height > MAX_PDF_IMAGE_DIMENSION
+        || pixels > MAX_PDF_IMAGE_PIXELS
+    {
+        return Err("image dimensions exceed processing limits".into());
+    }
+
+    let decoded = image
+        .to_dynamic_image()
+        .map_err(|error| format!("image decoding failed: {error}"))?;
+    optimize_decoded_image(decoded)
+}
+
+fn optimize_decoded_image(decoded: DynamicImage) -> Result<(String, u32, u32), String> {
+    let width = decoded.width();
+    let height = decoded.height();
+    let rgba = decoded.to_rgba8();
+    let mut rgb = image::RgbImage::new(width, height);
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        let alpha = u32::from(pixel[3]);
+        let blend_white =
+            |channel: u8| ((u32::from(channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        rgb.put_pixel(
+            x,
+            y,
+            image::Rgb([
+                blend_white(pixel[0]),
+                blend_white(pixel[1]),
+                blend_white(pixel[2]),
+            ]),
+        );
+    }
+
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, 95)
+        .write_image(&rgb, width, height, image::ExtendedColorType::Rgb8)
+        .map_err(|error| format!("JPEG intermediate encoding failed: {error}"))?;
+
+    let mut parameters = caesium::parameters::CSParameters::new();
+    parameters.jpeg.quality = 80;
+    parameters.jpeg.preserve_icc = false;
+    parameters.keep_metadata = false;
+    parameters.keep_rotation = false;
+    if width > 1200 {
+        parameters.width = 1200;
+    }
+    let compressed = caesium::compress_in_memory(jpeg, &parameters)
+        .map_err(|error| format!("libcaesium compression failed: {error}"))?;
+    let output_width = width.min(1200);
+    let output_height = if width > 1200 {
+        ((u64::from(height) * 1200 + u64::from(width) / 2) / u64::from(width)) as u32
+    } else {
+        height
+    };
+    let data_uri = format!("data:image/jpeg;base64,{}", STANDARD.encode(compressed));
+    Ok((data_uri, output_width, output_height))
+}
+
+fn extract_vector_figures(
+    pdf_bytes: &[u8],
+    document: &PdfDocument,
+    page_index: usize,
+    lines: &[StyledLine],
+) -> Vec<(Rect, DynamicImage)> {
+    let Ok(media) = document.get_page_media_box(page_index) else {
+        return Vec::new();
+    };
+    let page_width = media.2 - media.0;
+    let Ok(paths) = document.extract_paths(page_index) else {
+        return Vec::new();
+    };
+    let mut figures = Vec::new();
+    for path in paths {
+        let bbox = path.rendered_bbox();
+        if bbox.width < page_width * 0.45
+            || bbox.height < 80.0
+            || bbox.width * bbox.height < 10_000.0
+            || bbox.x < media.0
+            || bbox.y < media.1
+            || bbox.x + bbox.width > media.2
+            || bbox.y + bbox.height > media.3
+        {
+            continue;
+        }
+
+        // A figure is a large vector path isolated between two text lines.
+        // Page-wide frames and paths overlapping text are therefore excluded.
+        let nearest_line_above = lines
+            .iter()
+            .map(|line| line.y)
+            .filter(|line_y| *line_y >= bbox.y + bbox.height)
+            .min_by(f32::total_cmp);
+        let nearest_line_below = lines
+            .iter()
+            .map(|line| line.y)
+            .filter(|line_y| *line_y <= bbox.y)
+            .max_by(f32::total_cmp);
+        if !nearest_line_above.is_some_and(|line_y| line_y - (bbox.y + bbox.height) >= 2.0)
+            || !nearest_line_below.is_some_and(|line_y| bbox.y - line_y >= 2.0)
+        {
+            continue;
+        }
+
+        let padding = 2.0;
+        let crop_x = (bbox.x - padding).max(media.0);
+        let crop_y = (bbox.y - padding).max(media.1);
+        let crop_right = (bbox.x + bbox.width + padding).min(media.2);
+        let crop_top = (bbox.y + bbox.height + padding).min(media.3);
+        let crop = (crop_x, crop_y, crop_right, crop_top);
+        if let Some(image) = render_pdf_region(pdf_bytes, page_index, media, crop) {
+            figures.push((bbox, image));
+        }
+    }
+    figures
+}
+
+fn render_pdf_region(
+    pdf_bytes: &[u8],
+    page_index: usize,
+    media: (f32, f32, f32, f32),
+    crop: (f32, f32, f32, f32),
+) -> Option<DynamicImage> {
+    const DPI: u32 = 150;
+    let scale = DPI as f32 / 72.0;
+    let page_width = media.2 - media.0;
+    let page_height = media.3 - media.1;
+    let output_pixels = (page_width * scale).ceil() * (page_height * scale).ceil();
+    if !output_pixels.is_finite() || output_pixels > 4_000_000.0 {
+        return None;
+    }
+
+    let id = VECTOR_RENDER_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let temporary_dir =
+        std::env::temp_dir().join(format!("kpapers-vector-{}-{id}", std::process::id()));
+    std::fs::create_dir(&temporary_dir).ok()?;
+    let output_prefix = temporary_dir.join("page");
+    let output_path = output_prefix.with_extension("png");
+    let page_number = (page_index + 1).to_string();
+    let dpi = DPI.to_string();
+    let child_result = Command::new("pdftoppm")
+        .args([
+            "-f",
+            &page_number,
+            "-l",
+            &page_number,
+            "-r",
+            &dpi,
+            "-png",
+            "-singlefile",
+            "-",
+        ])
+        .arg(&output_prefix)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = child_result else {
+        let _ = std::fs::remove_dir_all(&temporary_dir);
+        return None;
+    };
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or(std::io::ErrorKind::BrokenPipe.into())
+        .and_then(|mut stdin| stdin.write_all(pdf_bytes));
+    if write_result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&temporary_dir);
+        return None;
+    }
+    if !child.wait().ok()?.success() {
+        let _ = std::fs::remove_dir_all(&temporary_dir);
+        return None;
+    }
+    let full_page = image::open(&output_path).ok();
+    let _ = std::fs::remove_dir_all(&temporary_dir);
+    let full_page = full_page?;
+
+    let x = ((crop.0 - media.0) * scale).round().max(0.0) as u32;
+    let y = ((media.3 - crop.3) * scale).round().max(0.0) as u32;
+    let width = ((crop.2 - crop.0) * scale).round().max(1.0) as u32;
+    let height = ((crop.3 - crop.1) * scale).round().max(1.0) as u32;
+    if x >= full_page.width() || y >= full_page.height() {
+        return None;
+    }
+    let width = width.min(full_page.width() - x);
+    let height = height.min(full_page.height() - y);
+    Some(full_page.crop_imm(x, y, width, height))
+}
+
+fn inline_jpeg_image_html(data_uri: &str, width: u32, height: u32) -> Option<String> {
+    let markup = format!(
+        "<img src=\"{data_uri}\" alt=\"\" width=\"{width}\" height=\"{height}\" style=\"max-width:100%;height:auto\">"
+    );
+    is_safe_inline_jpeg_image_markup(&markup).then_some(markup)
+}
+
+fn is_safe_inline_jpeg_image_markup(markup: &str) -> bool {
+    let Some(attributes) = markup.strip_prefix("<img src=\"data:image/jpeg;base64,") else {
+        return false;
+    };
+    let Some((encoded, attributes)) = attributes.split_once("\" alt=\"\" width=\"") else {
+        return false;
+    };
+    let Some((width, attributes)) = attributes.split_once("\" height=\"") else {
+        return false;
+    };
+    let Some((height, attributes)) =
+        attributes.split_once("\" style=\"max-width:100%;height:auto\">")
+    else {
+        return false;
+    };
+    if !attributes.is_empty() || encoded.is_empty() || encoded.len() % 4 != 0 {
+        return false;
+    }
+    let mut padding = false;
+    let mut padding_count = 0;
+    for byte in encoded.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' if !padding => {}
+            b'=' => {
+                padding = true;
+                padding_count += 1;
+                if padding_count > 2 {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    let Ok(width) = width.parse::<u32>() else {
+        return false;
+    };
+    let Ok(height) = height.parse::<u32>() else {
+        return false;
+    };
+    width > 0 && width <= 1200 && height > 0 && height <= MAX_PDF_IMAGE_DIMENSION
 }
 
 fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
@@ -129,6 +532,7 @@ fn text_lines_to_styled_lines(lines: Vec<TextLine>) -> Vec<StyledLine> {
             size,
             gap_before,
             left: line.bbox.x,
+            y: line.bbox.y,
         });
     }
     styled
@@ -228,23 +632,35 @@ fn is_cyrillic(ch: char) -> bool {
     matches!(ch as u32, 0x0400..=0x052F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F)
 }
 
-fn finalize_pages(
+#[cfg(test)]
+fn finalize_pages(pages: Vec<Vec<StyledLine>>, page_count: usize) -> Result<ExtractedText, String> {
+    let page_images = vec![Vec::new(); pages.len()];
+    finalize_pages_with_images(pages, page_images, page_count)
+}
+
+fn finalize_pages_with_images(
     mut pages: Vec<Vec<StyledLine>>,
+    mut page_images: Vec<Vec<PositionedImage>>,
     page_count: usize,
 ) -> Result<ExtractedText, String> {
+    page_images.resize_with(pages.len(), Vec::new);
+    page_images.truncate(pages.len());
     if pages
         .last()
         .is_some_and(|lines| is_skladchik_boundary_ad(lines))
     {
         pages.pop();
+        page_images.pop();
     }
     if pages
         .first()
         .is_some_and(|lines| is_skladchik_boundary_ad(lines))
     {
         pages.remove(0);
+        page_images.remove(0);
     }
     strip_trailing_sponsr_navigation(&mut pages);
+    page_images.truncate(pages.len());
     // Printed page numbering normally starts at 1 on the first content page, so
     // labels must be compared after leading advertisement pages are removed.
     strip_page_labels_by_content_position(&mut pages);
@@ -253,6 +669,7 @@ fn finalize_pages(
         strip_crimsonanalytics_preamble(first_page);
     }
     strip_sponsr_branding(&mut pages);
+    strip_images_above_first_content_line(&pages, &mut page_images);
 
     let first_page = pages
         .first()
@@ -271,7 +688,7 @@ fn finalize_pages(
     if !full_text.chars().any(char::is_alphanumeric) {
         return Err("PDF contains no usable native text".into());
     }
-    let html = lines_to_html(&pages);
+    let html = lines_and_images_to_html(&pages, &page_images);
     let markdown = html_to_markdown(&html);
     Ok(ExtractedText {
         full_text,
@@ -280,6 +697,24 @@ fn finalize_pages(
         first_page,
         page_count,
     })
+}
+
+fn strip_images_above_first_content_line(
+    pages: &[Vec<StyledLine>],
+    page_images: &mut [Vec<PositionedImage>],
+) {
+    let (Some(first_page), Some(first_page_images)) = (pages.first(), page_images.first_mut())
+    else {
+        return;
+    };
+    let Some(first_content_y) = first_page
+        .iter()
+        .find(|line| !line.text().trim().is_empty())
+        .map(|line| line.y)
+    else {
+        return;
+    };
+    first_page_images.retain(|image| image.y.is_none_or(|image_y| image_y <= first_content_y));
 }
 
 pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut ExtractedText) {
@@ -384,7 +819,7 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
     );
 }
 
-fn html_to_markdown(html: &str) -> String {
+pub(crate) fn html_to_markdown(html: &str) -> String {
     let mut blocks = Vec::new();
     let mut quote_blocks = Vec::new();
     let mut in_quote = false;
@@ -441,6 +876,17 @@ fn html_inline_to_markdown(input: &str) -> String {
     let mut cursor = 0;
     while cursor < input.len() {
         let remaining = &input[cursor..];
+        if remaining.starts_with("<img ")
+            && let Some(tag_end) = remaining.find('>')
+        {
+            let tag_end = tag_end + 1;
+            let tag = &remaining[..tag_end];
+            if is_safe_inline_jpeg_image_markup(tag) {
+                output.push_str(tag);
+                cursor += tag_end;
+                continue;
+            }
+        }
         let (token, replacement, is_formatting) = if remaining.starts_with("<strong>") {
             ("<strong>", Some("**"), true)
         } else if remaining.starts_with("</strong>") {
@@ -1233,7 +1679,16 @@ fn is_sponsr_branding_line(text: &str) -> bool {
     normalized == "кримсон аналитика - crimsonanalytics"
 }
 
+#[cfg(test)]
 fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
+    let page_images = vec![Vec::new(); pages.len()];
+    lines_and_images_to_html(pages, &page_images)
+}
+
+fn lines_and_images_to_html(
+    pages: &[Vec<StyledLine>],
+    page_images: &[Vec<PositionedImage>],
+) -> String {
     let mut grouped_pages = pages.to_vec();
     merge_wrapped_title_lines(&mut grouped_pages);
     let pages = grouped_pages.as_slice();
@@ -1282,7 +1737,15 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     let mut quote_left = None::<f32>;
     let mut global_index = 0usize;
     let mut previous_page_last: Option<&StyledLine> = None;
-    for page in pages {
+    for (page_index, page) in pages.iter().enumerate() {
+        let mut images = page_images.get(page_index).cloned().unwrap_or_default();
+        images.sort_by(|left, right| match (left.y, right.y) {
+            (Some(left_y), Some(right_y)) => right_y.total_cmp(&left_y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        let mut next_image = 0usize;
         let lines = page
             .iter()
             .filter(|line| !line.text().trim().is_empty())
@@ -1293,6 +1756,17 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
                     "p".to_owned(),
                     std::mem::take(&mut paragraph),
                     paragraph_quote,
+                ));
+            }
+            for image in &images {
+                blocks.push((
+                    "img".to_owned(),
+                    vec![StyledRun {
+                        text: image.html.clone(),
+                        bold: false,
+                        italic: false,
+                    }],
+                    false,
                 ));
             }
             previous_page_last = None;
@@ -1310,6 +1784,30 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
         let page_last = lines.last().copied();
         let mut previous_line: Option<&StyledLine> = None;
         for line in lines {
+            while images
+                .get(next_image)
+                .and_then(|image| image.y)
+                .is_some_and(|image_y| image_y >= line.y)
+            {
+                if !paragraph.is_empty() {
+                    blocks.push((
+                        "p".to_owned(),
+                        std::mem::take(&mut paragraph),
+                        paragraph_quote,
+                    ));
+                }
+                let image = &images[next_image];
+                blocks.push((
+                    "img".to_owned(),
+                    vec![StyledRun {
+                        text: image.html.clone(),
+                        bold: false,
+                        italic: false,
+                    }],
+                    false,
+                ));
+                next_image += 1;
+            }
             if line.left >= base_left + 5.0 {
                 quote_left = Some(line.left);
             } else if quote_left.is_some_and(|left| line.left < left - 2.0) {
@@ -1383,6 +1881,26 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
             }
             previous_line = Some(line);
         }
+        while next_image < images.len() {
+            if !paragraph.is_empty() {
+                blocks.push((
+                    "p".to_owned(),
+                    std::mem::take(&mut paragraph),
+                    paragraph_quote,
+                ));
+            }
+            let image = &images[next_image];
+            blocks.push((
+                "img".to_owned(),
+                vec![StyledRun {
+                    text: image.html.clone(),
+                    bold: false,
+                    italic: false,
+                }],
+                false,
+            ));
+            next_image += 1;
+        }
         previous_page_last = page_last;
     }
     if !paragraph.is_empty() {
@@ -1393,6 +1911,13 @@ fn lines_to_html(pages: &[Vec<StyledLine>]) -> String {
     let mut index = 0;
     while index < blocks.len() {
         let (tag, runs, in_quote) = &blocks[index];
+        if *tag == "img" {
+            if let Some(image) = runs.first() {
+                output.push(image.text.clone());
+            }
+            index += 1;
+            continue;
+        }
         if *in_quote {
             let mut quote = Vec::new();
             while index < blocks.len() && blocks[index].2 {
@@ -1436,19 +1961,125 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        StyledLine, StyledRun, cache_fingerprint, extract_pdf, finalize_pages,
+        PositionedImage, STANDARD, StyledLine, StyledRun, cache_fingerprint, extract_pdf,
+        finalize_pages, html_to_markdown, inline_jpeg_image_html, is_safe_inline_jpeg_image_markup,
         is_skladchik_promotion, is_skladchik_purchase_promotion, is_xml_10_char,
-        large_gap_continues_sentence, lines_to_html, normalize_text, pages_to_text,
-        push_styled_char, strip_page_label_lines, strip_page_labels_by_content_position,
-        strip_sponsr_branding, strip_sponsr_preamble, text_lines_to_styled_lines,
-        text_to_safe_html,
+        large_gap_continues_sentence, lines_and_images_to_html, lines_to_html, normalize_text,
+        optimize_pdf_image, pages_to_text, push_styled_char, strip_page_label_lines,
+        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
+        text_lines_to_styled_lines, text_to_safe_html,
     };
+    use base64::Engine as _;
+    use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
     use pdf_oxide::geometry::Rect;
     use pdf_oxide::layout::{FontWeight, TextChar, TextLine, Word};
 
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
+
+    #[test]
+    fn positions_images_between_page_text_lines_by_vertical_bounds() {
+        let mut earlier = line("Earlier", 12.0);
+        earlier.y = 200.0;
+        let mut later = line("Later", 12.0);
+        later.y = 100.0;
+        let pages = vec![vec![earlier, later]];
+        let html = lines_and_images_to_html(
+            &pages,
+            &[vec![PositionedImage {
+                y: Some(150.0),
+                html: "<img src=\"data:image/jpeg;base64,between\" alt=\"\">".into(),
+            }]],
+        );
+        assert!(
+            html.find("Earlier").unwrap() < html.find("between").unwrap()
+                && html.find("between").unwrap() < html.find("Later").unwrap(),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn positions_images_without_bounds_after_their_page_text() {
+        let pages = vec![vec![line("Page text", 12.0)]];
+        let html = lines_and_images_to_html(
+            &pages,
+            &[vec![PositionedImage {
+                y: None,
+                html: "<img src=\"data:image/jpeg;base64,unpositioned\" alt=\"\">".into(),
+            }]],
+        );
+        assert!(
+            html.find("Page text").unwrap() < html.find("unpositioned").unwrap(),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn optimizes_pdf_images_to_jpeg_at_or_below_the_width_limit() {
+        let image = PdfImage::new(
+            1201,
+            2,
+            ColorSpace::DeviceRGB,
+            8,
+            ImageData::Raw {
+                pixels: vec![180; 1201 * 2 * 3],
+                format: PixelFormat::RGB,
+            },
+        );
+        let (uri, width, height) = optimize_pdf_image(&image).expect("image should compress");
+        assert!(uri.starts_with("data:image/jpeg;base64,"));
+        assert_eq!((width, height), (1200, 2));
+        let encoded = uri.strip_prefix("data:image/jpeg;base64,").unwrap();
+        let bytes = STANDARD.decode(encoded).expect("data URI should be base64");
+        let decoded = image::load_from_memory(&bytes).expect("compressed image should decode");
+        assert_eq!((decoded.width(), decoded.height()), (1200, 2));
+        assert!(!bytes.windows(2).any(|marker| marker == [0xff, 0xe1]));
+    }
+
+    #[test]
+    fn inline_image_policy_preserves_only_fixed_jpeg_data_uri_markup() {
+        let data_uri = format!("data:image/jpeg;base64,{}", STANDARD.encode([1, 2, 3]));
+        let markup = inline_jpeg_image_html(&data_uri, 3, 2).unwrap();
+        assert!(is_safe_inline_jpeg_image_markup(&markup));
+        assert!(inline_jpeg_image_html("https://example.test/image.jpg", 3, 2).is_none());
+        assert!(inline_jpeg_image_html("data:image/png;base64,AQID", 3, 2).is_none());
+        assert!(
+            inline_jpeg_image_html("data:image/jpeg;base64,AQID\" onerror=\"alert(1)", 3, 2)
+                .is_none()
+        );
+        assert!(inline_jpeg_image_html(&data_uri, 1201, 2).is_none());
+    }
+
+    #[test]
+    fn markdown_preserves_safe_inline_images_in_article_order() {
+        let data_uri = format!("data:image/jpeg;base64,{}", STANDARD.encode([1, 2, 3]));
+        let image = inline_jpeg_image_html(&data_uri, 3, 2).unwrap();
+        let markdown = html_to_markdown(&format!("<p>Before</p>\n{image}\n<p>After</p>"));
+        assert!(markdown.find("Before").unwrap() < markdown.find(&image).unwrap());
+        assert!(markdown.find(&image).unwrap() < markdown.find("After").unwrap());
+
+        let unsafe_markdown = html_to_markdown(
+            "<p>Before</p>\n<img src=\"https://example.test/image.jpg\">\n<p>After</p>",
+        );
+        assert!(unsafe_markdown.contains("\\<img src=\"https://"));
+        assert!(unsafe_markdown.contains("Before") && unsafe_markdown.contains("After"));
+    }
+
+    #[test]
+    fn rejects_oversized_pdf_images_before_decoding_pixel_data() {
+        let image = PdfImage::new(
+            super::MAX_PDF_IMAGE_DIMENSION + 1,
+            1,
+            ColorSpace::DeviceRGB,
+            8,
+            ImageData::Raw {
+                pixels: Vec::new(),
+                format: PixelFormat::RGB,
+            },
+        );
+        assert!(optimize_pdf_image(&image).is_err());
+    }
 
     #[test]
     fn promotion_match_ignores_case_quotes_and_line_wraps() {
@@ -1689,6 +2320,7 @@ mod tests {
                     size: 9.0,
                     gap_before: 0.0,
                     left: 50.0,
+                    y: 0.0,
                 },
                 line("Article after branding.", 12.0),
                 line("CrimsonAlter – Analytics", 9.0),
@@ -1753,6 +2385,7 @@ mod tests {
             size,
             gap_before: 0.0,
             left: 50.0,
+            y: 0.0,
         }
     }
 
@@ -2241,7 +2874,8 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v30:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v33:pdf_oxide:{source}"));
+        assert_ne!(processed, format!("pdf-text-v31:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v28:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v27:pdf_oxide:{source}"));
@@ -3042,6 +3676,7 @@ mod tests {
                 size: 15.0,
                 gap_before: 0.0,
                 left: 50.0,
+                y: 0.0,
             }],
         ];
         let expected = "уже отвечалось, потому что любой вопрос есть вопрос добра и зла.";
@@ -3216,6 +3851,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 0.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3226,6 +3862,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 32.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![
@@ -3243,6 +3880,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 16.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3253,6 +3891,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 32.0,
                 left: 50.0,
+                y: 0.0,
             },
         ];
         assert_eq!(
@@ -3273,6 +3912,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 0.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3283,6 +3923,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 27.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3293,6 +3934,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 40.0,
                 left: 50.0,
+                y: 0.0,
             },
         ];
         let html = lines_to_html(&[page]);
@@ -3321,6 +3963,7 @@ mod tests {
                 size: 14.0,
                 gap_before: 0.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3331,6 +3974,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 35.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3341,6 +3985,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 26.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3351,6 +3996,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 26.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3361,6 +4007,7 @@ mod tests {
                 size: 16.0,
                 gap_before: 40.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3371,6 +4018,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 36.0,
                 left: 50.0,
+                y: 0.0,
             },
         ];
         let html = lines_to_html(&[page]);
@@ -3397,6 +4045,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 0.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3407,6 +4056,7 @@ mod tests {
                 size: 16.0,
                 gap_before: 16.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3417,6 +4067,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 16.0,
                 left: 50.0,
+                y: 0.0,
             },
         ];
         let html = lines_to_html(&[page]);
@@ -3438,6 +4089,7 @@ mod tests {
                 size: 24.0,
                 gap_before: 0.0,
                 left: 50.0,
+            y: 0.0,
             },
             line("Ordinary body text establishes the common font size.", 12.0),
             StyledLine {
@@ -3449,6 +4101,7 @@ mod tests {
                 size: 14.0,
                 gap_before: 36.0,
                 left: 50.0,
+            y: 0.0,
             },
             line("More ordinary body text follows the prominent paragraph.", 12.0),
         ];
@@ -3477,6 +4130,7 @@ mod tests {
                 size: 22.0,
                 gap_before: 0.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3487,6 +4141,7 @@ mod tests {
                 size: 16.0,
                 gap_before: 16.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3497,6 +4152,7 @@ mod tests {
                 size: 14.0,
                 gap_before: 16.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3507,6 +4163,7 @@ mod tests {
                 size: 13.0,
                 gap_before: 32.0,
                 left: 50.0,
+                y: 0.0,
             },
             StyledLine {
                 runs: vec![StyledRun {
@@ -3517,6 +4174,7 @@ mod tests {
                 size: 12.0,
                 gap_before: 32.0,
                 left: 50.0,
+                y: 0.0,
             },
         ];
         let html = lines_to_html(&[page]);

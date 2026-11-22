@@ -21,6 +21,7 @@ enum ExportScope<'a> {
 struct ExportEntry {
     filename: String,
     extracted_text: String,
+    sanitized_html: String,
     year: i64,
     month: i64,
 }
@@ -29,7 +30,7 @@ async fn entries_for_scope(
     pool: &SqlitePool,
     scope: ExportScope<'_>,
 ) -> Result<Vec<ExportEntry>, sqlx::Error> {
-    let query = "SELECT sd.filename, cc.extracted_text, fy.year, fm.month \
+    let query = "SELECT sd.filename, cc.extracted_text, cc.sanitized_html, fy.year, fm.month \
         FROM source_documents sd \
         JOIN cached_content cc ON cc.document_id = sd.id \
         JOIN feed_months fm ON fm.id = sd.month_id \
@@ -140,8 +141,12 @@ async fn export_scope(pool: &SqlitePool, scope: ExportScope<'_>) -> Result<Respo
             .replace('#', "\\#")
             .replace('[', "\\[")
             .replace(']', "\\]");
-        write!(writer, "# {title}\n\n{}\n", entry.extracted_text)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let body = if entry.sanitized_html.trim().is_empty() {
+            entry.extracted_text
+        } else {
+            crate::pdf_processing::html_to_markdown(&entry.sanitized_html)
+        };
+        write!(writer, "# {title}\n\n{body}\n").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     let archive = writer
         .finish()
@@ -506,6 +511,12 @@ mod tests {
             "success",
         )
         .await;
+        let inline_html = "<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
+        sqlx::query("UPDATE cached_content SET sanitized_html=? WHERE document_id='doc'")
+            .bind(inline_html)
+            .execute(&pool)
+            .await
+            .unwrap();
         insert_entry(
             &pool,
             "duplicate",
@@ -575,7 +586,10 @@ mod tests {
             .unwrap()
             .read_to_string(&mut markdown)
             .unwrap();
-        assert_eq!(markdown, "# entry\n\ntext for nested/entry.pdf\n");
+        assert_eq!(
+            markdown,
+            "# entry\n\nBefore image\n\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n\nAfter image\n"
+        );
 
         let response = export_scope(&pool, ExportScope::Year("feed", 2026))
             .await

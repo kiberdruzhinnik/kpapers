@@ -72,5 +72,18 @@ services:
     command: ["python", "${E2E_TEST_SCRIPT:-/tests/e2e/test_miniflux.py}"]
     networks: [app]
 
+  miniflux-browser:
+    image: kpapers-browser:e2e
+    build:
+      context: ./web
+      dockerfile: Dockerfile.e2e
+    environment:
+      APP_BASE_URL: http://miniflux:8080
+      MINIFLUX_BASE_URL: http://miniflux:8080
+      MINIFLUX_USERNAME: e2e
+      MINIFLUX_PASSWORD: e2e-only-password
+    command: ["npx", "playwright", "test", "tests/browser/miniflux-images.spec.ts"]
+    networks: [app]
+
 volumes:
   miniflux_data:

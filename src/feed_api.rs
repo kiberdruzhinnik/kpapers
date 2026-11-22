@@ -921,8 +921,9 @@ mod tests {
         sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes) VALUES ('doc', 'month', 'article.pdf', 'article.pdf', 'https://fixture.invalid/pdf-oxide/article.pdf', ?, ?)")
             .bind(&fingerprint).bind(pdf.len() as i64).execute(&pool).await.unwrap();
         let old_marker_key = format!("pdf-text-v13:marker:{fingerprint}");
-        sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES ('doc', ?, 'Last successful content', 'Last successful content', '<p>Last successful content</p>', 1)")
-            .bind(&old_marker_key).execute(&pool).await.unwrap();
+        let cached_html = "<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
+        sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES ('doc', ?, 'Last successful content', 'Last successful content', ?, 1)")
+            .bind(&old_marker_key).bind(cached_html).execute(&pool).await.unwrap();
 
         let extract = |force| {
             extract_document(
@@ -932,11 +933,15 @@ mod tests {
             )
         };
         assert_eq!(extract(false).await.err(), Some(StatusCode::BAD_GATEWAY));
-        let (status, text, cache_key): (String, String, String) = sqlx::query_as(
-            "SELECT extraction_status, (SELECT extracted_text FROM cached_content WHERE document_id='doc'), (SELECT content_fingerprint FROM cached_content WHERE document_id='doc') FROM source_documents WHERE id='doc'",
+        let (status, text, html, cache_key): (String, String, String, String) = sqlx::query_as(
+            "SELECT extraction_status, (SELECT extracted_text FROM cached_content WHERE document_id='doc'), (SELECT sanitized_html FROM cached_content WHERE document_id='doc'), (SELECT content_fingerprint FROM cached_content WHERE document_id='doc') FROM source_documents WHERE id='doc'",
         ).fetch_one(&pool).await.unwrap();
         assert_eq!(status, "failure");
         assert_eq!(text, "Last successful content");
+        assert_eq!(
+            html, cached_html,
+            "the last successful inline image HTML must be retained"
+        );
         assert_eq!(
             cache_key, old_marker_key,
             "Marker output must not be reused as a pdf_oxide cache match"
@@ -997,7 +1002,15 @@ mod tests {
         let rss_body = axum::body::to_bytes(rss.into_body(), 1024 * 1024)
             .await
             .unwrap();
-        assert!(String::from_utf8_lossy(&rss_body).contains("Last successful content"));
+        let rss_body = String::from_utf8_lossy(&rss_body);
+        assert!(rss_body.contains(&format!(
+            "<description><![CDATA[{cached_html}]]></description>"
+        )));
+        assert!(rss_body.contains(&format!(
+            "<content:encoded><![CDATA[{cached_html}]]></content:encoded>"
+        )));
+        assert!(rss_body.find("Before image").unwrap() < rss_body.find("AQID").unwrap());
+        assert!(rss_body.find("AQID").unwrap() < rss_body.find("After image").unwrap());
         let _ = std::fs::remove_dir_all(&fixture_root);
         crate::test_support::cleanup(pool, path).await;
     }

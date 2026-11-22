@@ -14,6 +14,7 @@ services:
     ports: []
 
   ui-e2e:
+    image: kpapers-browser:e2e
     build:
       context: ./web
       dockerfile: Dockerfile.e2e

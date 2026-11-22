@@ -13,10 +13,12 @@ axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 hmac = "0.12"
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 ipnet = "2"
+libcaesium = { version = "0.21.2", default-features = false, features = ["jpg"] }
 libfuzzer-sys = "0.4"
 percent-encoding = "2"
-pdf_oxide = "0.3.78"
+pdf_oxide = { version = "0.3.78", features = ["jpeg2000"] }
 
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -26,6 +28,7 @@ serde_urlencoded = "0.7"
 sha2 = "0.10"
 sqlx = { version = "0.8", features = ["macros", "migrate", "runtime-tokio-rustls", "sqlite"] }
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread"] }
+tracing = "0.1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 
