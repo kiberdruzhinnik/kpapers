@@ -137,7 +137,10 @@ test("operator manages a feed, source folder, publication decision, and account 
   await expect(page.getByText("Publication decision saved").first()).toBeVisible()
   await saveDecision("automatic")
   await expect(page.getByText("Publication decision saved").first()).toBeVisible()
-  await page.getByRole("button", { name: "Back to feeds" }).click()
+  await expect(page.getByRole("button", { name: "Back to feeds" })).toHaveCount(0)
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: /Feeds/ }).click()
+  await page.getByRole("button", { name: new RegExp(`${feedName} Edited`) }).click()
+  await expect(page).toHaveURL(new RegExp(`/manage/feeds/${createdFeed.id}$`))
 
   await monthCard.getByRole("button", { name: "Show source details for November" }).click()
   await monthCard.getByRole("button", { name: "Archive", exact: true }).click()
