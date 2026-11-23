@@ -174,10 +174,10 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onInvalid
       </div>
 
       <Tabs onValueChange={(value) => onQueueModeChange(value === "browse-source" ? null : value as ReviewQueueMode)} value={initialQueueMode ?? "browse-source"}>
-        <TabsList aria-label="PDF review filters">
-          <TabsTrigger value="needs-review">Needs review</TabsTrigger>
-          <TabsTrigger value="archived">Archived</TabsTrigger>
-          <TabsTrigger value="browse-source">Browse by source</TabsTrigger>
+        <TabsList aria-label="PDF review filters" className="h-auto max-w-full flex-wrap">
+          <TabsTrigger className="h-auto min-h-[26px] min-w-0 whitespace-normal text-center leading-tight" value="needs-review">Needs review</TabsTrigger>
+          <TabsTrigger className="h-auto min-h-[26px] min-w-0 whitespace-normal text-center leading-tight" value="archived">Archived</TabsTrigger>
+          <TabsTrigger className="h-auto min-h-[26px] min-w-0 whitespace-normal text-center leading-tight" value="browse-source">Browse by source</TabsTrigger>
         </TabsList>
       </Tabs>
 
