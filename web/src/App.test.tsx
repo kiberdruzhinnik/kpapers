@@ -211,24 +211,26 @@ describe("operator session and dashboard shell", () => {
     expect(window.location.search).toBe("?queue=archived")
     expect(fetchMock).toHaveBeenCalledWith("/api/management/review-queue?archived=true", expect.objectContaining({ credentials: "same-origin" }))
 
-    await user.click(screen.getByRole("button", { name: "Browse by source" }))
+    await user.click(screen.getByRole("tab", { name: "Browse by source" }))
     await waitFor(() => expect(window.location.pathname).toBe("/manage/pdf-review/feed-1/2026/month-1"))
     expect(window.location.search).toBe("")
-    expect(screen.getByRole("button", { name: "Browse by source" })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByRole("tab", { name: "Browse by source" })).toHaveAttribute("aria-selected", "true")
     expect(screen.queryByRole("heading", { name: "Archived documents needing attention" })).not.toBeInTheDocument()
   })
 
-  it("returns from PDF review to the selected feed", async () => {
+  it("keeps dashboard navigation available without a page-level back button", async () => {
     installApi(true)
     window.history.replaceState({}, "", "/manage/pdf-review/feed-1/2026/month-1")
     const user = userEvent.setup()
     render(<App />)
 
     await screen.findByText("Ada Lovelace · 2026 · November")
-    await user.click(screen.getByRole("button", { name: "Back to feeds" }))
+    expect(screen.queryByRole("button", { name: "Back to feeds" })).not.toBeInTheDocument()
+    const nav = screen.getByRole("navigation", { name: "Primary navigation" })
+    await user.click(within(nav).getByRole("button", { name: /Feeds/ }))
 
-    expect(window.location.pathname).toBe("/manage/feeds/feed-1")
-    expect(await screen.findByRole("region", { name: "Feed details" })).toBeInTheDocument()
+    expect(window.location.pathname).toBe("/manage/feeds")
+    expect(await screen.findByRole("heading", { name: "Feeds" })).toBeInTheDocument()
   })
 
   it("updates the browser URL when selecting a feed and returns to Overview from the brand", async () => {
