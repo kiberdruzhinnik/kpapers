@@ -921,7 +921,7 @@ mod tests {
         sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes) VALUES ('doc', 'month', 'article.pdf', 'article.pdf', 'https://fixture.invalid/pdf-oxide/article.pdf', ?, ?)")
             .bind(&fingerprint).bind(pdf.len() as i64).execute(&pool).await.unwrap();
         let old_marker_key = format!("pdf-text-v13:marker:{fingerprint}");
-        let cached_html = "<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
+        let cached_html = "<p>по-своему [исправлено: посвоему], the [corrected from: teh]</p>\n<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
         sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES ('doc', ?, 'Last successful content', 'Last successful content', ?, 1)")
             .bind(&old_marker_key).bind(cached_html).execute(&pool).await.unwrap();
 
@@ -1009,6 +1009,8 @@ mod tests {
         assert!(rss_body.contains(&format!(
             "<content:encoded><![CDATA[{cached_html}]]></content:encoded>"
         )));
+        assert!(rss_body.contains("по-своему [исправлено: посвоему]"));
+        assert!(rss_body.contains("the [corrected from: teh]"));
         assert!(rss_body.find("Before image").unwrap() < rss_body.find("AQID").unwrap());
         assert!(rss_body.find("AQID").unwrap() < rss_body.find("After image").unwrap());
         let _ = std::fs::remove_dir_all(&fixture_root);
