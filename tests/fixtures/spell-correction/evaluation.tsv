@@ -1,0 +1,7 @@
+# These two extracted forms and their expected replacements were reviewed by the user.
+# Language-specific, exact corrections only; unreviewed dictionary suggestions are not applied.
+source	extracted	expected	language	class
+20240729	посвоему	по-своему	ru	missing-hyphen
+20240730	холлинг	холдинг	ru	letter-substitution
+20240729	спаслание	послание	ru	letter-substitution
+20240730	своеременно	своевременно	ru	letter-substitution

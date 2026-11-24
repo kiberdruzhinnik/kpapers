@@ -17,7 +17,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 33;
+const EXTRACTION_PIPELINE_REVISION: u32 = 35;
 const MAX_PDF_IMAGE_COUNT: usize = 100;
 const MAX_PDF_IMAGE_DIMENSION: u32 = 20_000;
 const MAX_PDF_IMAGE_PIXELS: u64 = 8_000_000;
@@ -671,6 +671,13 @@ fn finalize_pages_with_images(
     strip_sponsr_branding(&mut pages);
     strip_images_above_first_content_line(&pages, &mut page_images);
 
+    for line in pages.iter_mut().flatten() {
+        for run in &mut line.runs {
+            run.text = crate::spell_correction::correct_text(&run.text);
+        }
+    }
+    correct_reviewed_word_split_by_line_hyphen(&mut pages);
+
     let first_page = pages
         .first()
         .map(|lines| {
@@ -697,6 +704,47 @@ fn finalize_pages_with_images(
         first_page,
         page_count,
     })
+}
+
+fn correct_reviewed_word_split_by_line_hyphen(pages: &mut [Vec<StyledLine>]) {
+    for page in pages {
+        for line_index in 0..page.len().saturating_sub(1) {
+            let (previous_lines, next_lines) = page.split_at_mut(line_index + 1);
+            let previous = &mut previous_lines[line_index];
+            let next = &mut next_lines[0];
+            let previous_text = previous.text();
+            let next_text = next.text();
+            if !previous_text.trim_end().ends_with("по-")
+                || !next_text.trim_start().starts_with("своему,")
+                || !discretionary_line_hyphen(&previous_text, &next_text)
+            {
+                continue;
+            }
+
+            remove_line_ending_hyphen_from_runs(&mut previous.runs);
+            let Some(last_run) = previous.runs.last_mut() else {
+                continue;
+            };
+            last_run.text.push_str("-своему [исправлено: посвоему],");
+            remove_line_prefix(&mut next.runs, "своему,");
+        }
+    }
+}
+
+fn remove_line_prefix(runs: &mut Vec<StyledRun>, prefix: &str) {
+    let mut remaining = prefix.len();
+    for run in runs.iter_mut() {
+        let remove = remaining.min(run.text.len());
+        if !run.text.is_char_boundary(remove) {
+            continue;
+        }
+        run.text.drain(..remove);
+        remaining -= remove;
+        if remaining == 0 {
+            break;
+        }
+    }
+    runs.retain(|run| !run.text.is_empty());
 }
 
 fn strip_images_above_first_content_line(
@@ -2779,6 +2827,55 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_corrections_flow_through_text_html_first_page_and_markdown() {
+        let mut source = line("посвоему, мини-холлинг", 12.0);
+        source.runs[0].bold = true;
+        let extracted = finalize_pages(vec![vec![source]], 1).unwrap();
+        let corrected = "по-своему [исправлено: посвоему], мини-холдинг [исправлено: холлинг]";
+        assert_eq!(extracted.full_text, corrected);
+        assert_eq!(extracted.first_page, corrected);
+        assert_eq!(
+            extracted.html,
+            format!("<p><strong>{corrected}</strong></p>")
+        );
+        assert_eq!(
+            extracted.markdown,
+            "**по-своему \\[исправлено: посвоему\\], мини-холдинг \\[исправлено: холлинг\\]**"
+        );
+    }
+
+    #[test]
+    fn corrects_reviewed_word_reconstructed_across_a_line_end_hyphen() {
+        let extracted = finalize_pages(
+            vec![vec![
+                line("Стоит начать жить по-", 12.0),
+                line("своему, как это бывает", 12.0),
+            ]],
+            1,
+        )
+        .unwrap();
+        let corrected = "по-своему [исправлено: посвоему], как";
+        assert!(
+            extracted.full_text.contains(corrected),
+            "{}",
+            extracted.full_text
+        );
+        assert!(
+            extracted.first_page.contains(corrected),
+            "{}",
+            extracted.first_page
+        );
+        assert!(extracted.html.contains(corrected), "{}", extracted.html);
+        assert!(
+            extracted
+                .markdown
+                .contains("по-своему \\[исправлено: посвоему\\], как"),
+            "{}",
+            extracted.markdown
+        );
+    }
+
+    #[test]
     fn pdf_without_an_extractable_text_layer_fails_without_ocr() {
         let error = super::extract_pdf(&simple_pdf_pages(&[""]), 1024 * 1024)
             .expect_err("an empty text layer must not publish an empty article");
@@ -2874,7 +2971,7 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v33:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v35:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v31:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v28:pdf_oxide:{source}"));
