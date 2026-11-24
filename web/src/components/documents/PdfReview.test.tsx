@@ -53,10 +53,24 @@ function installDocumentsApi(failSave = false, queueDocuments: unknown[] = [queu
 }
 
 function renderReview(initialSelection: { feedId: string; year: number; monthId: string } | null = { feedId: "feed-1", year: 2026, monthId: "month-1" }, initialQueueMode: "needs-review" | "archived" | null = null) {
-  return render(<><Toaster /><PdfReview feeds={feeds} initialSelection={initialSelection} initialQueueMode={initialQueueMode} onBack={vi.fn()} onQueueModeChange={vi.fn()} /></>)
+  return render(<><Toaster /><PdfReview feeds={feeds} initialSelection={initialSelection} initialQueueMode={initialQueueMode} onQueueModeChange={vi.fn()} /></>)
 }
 
 describe("PDF review", () => {
+  it("uses segmented mode tabs and has no page-level back button", async () => {
+    const onQueueModeChange = vi.fn()
+    const user = userEvent.setup()
+    render(<><Toaster /><PdfReview feeds={feeds} initialSelection={null} initialQueueMode="needs-review" onQueueModeChange={onQueueModeChange} /></>)
+
+    const needsReviewTab = screen.getByRole("tab", { name: "Needs review" })
+    expect(needsReviewTab).toHaveAttribute("aria-selected", "true")
+    expect(screen.getByRole("tablist", { name: "PDF review filters" })).toHaveClass("rounded-lg", "bg-muted")
+    expect(screen.queryByRole("button", { name: "Back to feeds" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("tab", { name: "Archived" }))
+    expect(onQueueModeChange).toHaveBeenCalledWith("archived")
+  })
+
   it("saves automatic, include, and exclude publication choices", async () => {
     const fetchMock = installDocumentsApi()
     const user = userEvent.setup()

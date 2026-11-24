@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ArrowLeft, ExternalLink, FileText, RefreshCw } from "lucide-react"
+import { ExternalLink, FileText, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { api, type Feed, type Month, type ReviewQueueDocument, type ReviewQueueMode, type SourceDocument, type Year } from "@/lib/api"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -8,6 +8,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const classificationLabel: Record<string, string> = {
   publish: "Suitable for publication",
@@ -18,11 +19,10 @@ const classificationLabel: Record<string, string> = {
 type ReviewSelection = { feedId: string; year?: number; monthId?: string }
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
-export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, onInvalidSelection, onQueueModeChange, onSelectionChange }: {
+export function PdfReview({ feeds, initialSelection, initialQueueMode, onInvalidSelection, onQueueModeChange, onSelectionChange }: {
   feeds: Feed[]
   initialSelection: ReviewSelection | null
   initialQueueMode: ReviewQueueMode | null
-  onBack: () => void
   onInvalidSelection?: () => void
   onQueueModeChange: (mode: ReviewQueueMode | null) => void
   onSelectionChange?: (selection: ReviewSelection | null) => void
@@ -169,18 +169,17 @@ export function PdfReview({ feeds, initialSelection, initialQueueMode, onBack, o
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <Button aria-label="Back to feeds" className="mt-0.5 size-9 shrink-0 rounded-lg" onClick={onBack} size="icon" variant="outline"><ArrowLeft aria-hidden="true" /></Button>
-          <div className="min-w-0"><h1 className="text-2xl font-semibold tracking-tight">PDF review</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Manage publication decisions for extracted documents across your feeds.</p></div>
-        </div>
+        <div className="min-w-0"><h1 className="text-2xl font-semibold tracking-tight">PDF review</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Manage publication decisions for extracted documents across your feeds.</p></div>
         {!initialQueueMode && selectedFeed && year !== null && selectedMonth && <Badge className="h-auto max-w-full min-w-0 whitespace-normal break-words" variant="outline">{selectedFeed.display_name} · {year} · {monthNames[selectedMonth.month - 1] ?? `Month ${selectedMonth.month}`}</Badge>}
       </div>
 
-      <div aria-label="PDF review filters" className="flex min-w-0 flex-wrap gap-x-1 border-b" role="group">
-        <Button aria-pressed={initialQueueMode === "needs-review"} className={`h-10 rounded-none border-b-2 px-4 text-sm transition-colors ${initialQueueMode === "needs-review" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => onQueueModeChange("needs-review")} variant="ghost">Needs review</Button>
-        <Button aria-pressed={initialQueueMode === "archived"} className={`h-10 rounded-none border-b-2 px-4 text-sm transition-colors ${initialQueueMode === "archived" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => onQueueModeChange("archived")} variant="ghost">Archived</Button>
-        <Button aria-pressed={!initialQueueMode} className={`h-10 rounded-none border-b-2 px-4 text-sm transition-colors ${!initialQueueMode ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => onQueueModeChange(null)} variant="ghost">Browse by source</Button>
-      </div>
+      <Tabs onValueChange={(value) => onQueueModeChange(value === "browse-source" ? null : value as ReviewQueueMode)} value={initialQueueMode ?? "browse-source"}>
+        <TabsList aria-label="PDF review filters" className="h-auto max-w-full flex-wrap">
+          <TabsTrigger className="h-auto min-h-[26px] min-w-0 whitespace-normal text-center leading-tight" value="needs-review">Needs review</TabsTrigger>
+          <TabsTrigger className="h-auto min-h-[26px] min-w-0 whitespace-normal text-center leading-tight" value="archived">Archived</TabsTrigger>
+          <TabsTrigger className="h-auto min-h-[26px] min-w-0 whitespace-normal text-center leading-tight" value="browse-source">Browse by source</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {initialQueueMode ? <Card>
         <CardHeader className="gap-1 border-b pb-4">

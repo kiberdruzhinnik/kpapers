@@ -292,6 +292,17 @@ PDF review SHALL provide global queues of documents needing operator attention, 
 - **WHEN** the selected queue contains no documents needing attention
 - **THEN** PDF review communicates that the queue is empty
 
+### Requirement: Align PDF review mode controls with Feeds
+PDF review SHALL present its review modes in the same compact segmented-tab style used by the Feeds Active and Archived tabs, without a page-level back button.
+
+#### Scenario: View PDF review modes
+- **WHEN** an operator opens PDF review
+- **THEN** Needs review, Archived, and Browse by source appear as compact segmented tabs and no page-level back button is shown
+
+#### Scenario: Select a PDF review mode
+- **WHEN** an operator selects a PDF review mode
+- **THEN** the selected mode is clearly indicated and the existing mode behavior and URL are preserved
+
 ### Requirement: Separate feed list and detail screens
 The feed list SHALL contain restrained feed rows grouped by Active and Archived tabs. Opening a row SHALL navigate to a separate detail screen with All feeds navigation, stable RSS address, metadata editing, and scoped management actions.
 

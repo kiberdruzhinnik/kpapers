@@ -437,7 +437,7 @@ function AppContent() {
                 ? <CreateFeed onCancel={() => navigate("/manage/feeds")} onCreated={(feed) => { setFeeds((current) => [...current, feed]); navigate(feedPath(feed.id)) }} />
                 : <FeedManagement onCreate={() => navigate("/manage/feeds/new")} feeds={feeds} onFeedsChange={setFeeds} onReviewMonth={(month) => navigate(reviewPath({ feedId: month.feed_id, year: month.year, monthId: month.id }))} onSelectFeed={(feedId) => navigate(feedPath(feedId))} selectedFeedId={route.feedId ?? null} />
               : section === "PDF review"
-                ? <PdfReview feeds={feeds} initialQueueMode={reviewQueueMode} initialSelection={reviewSelection} key={location.pathname} onBack={() => navigate(feedPath(reviewSelection?.feedId))} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onQueueModeChange={updateReviewQueue} onSelectionChange={updateReviewSelection} />
+                ? <PdfReview feeds={feeds} initialQueueMode={reviewQueueMode} initialSelection={reviewSelection} key={location.pathname} onInvalidSelection={() => navigate("/manage/pdf-review", { replace: true })} onQueueModeChange={updateReviewQueue} onSelectionChange={updateReviewSelection} />
                 : <ProxySettingsPage />}
         </DashboardShell>}
     </>
