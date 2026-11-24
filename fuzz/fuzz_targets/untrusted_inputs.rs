@@ -7,14 +7,14 @@ mod auth;
 mod feed_api;
 #[path = "../../src/pdf_processing.rs"]
 mod pdf_processing;
-#[path = "../../src/spell_correction.rs"]
-mod spell_correction;
 #[path = "../../src/providers/mod.rs"]
 mod providers;
 #[path = "../../src/proxy.rs"]
 mod proxy;
 #[path = "../../src/rss.rs"]
 mod rss;
+#[path = "../../src/spell_correction.rs"]
+mod spell_correction;
 
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
     let Some((&selector, input)) = data.split_first() else {
