@@ -7,6 +7,8 @@ mod auth;
 mod feed_api;
 #[path = "../../src/pdf_processing.rs"]
 mod pdf_processing;
+#[path = "../../src/spell_correction.rs"]
+mod spell_correction;
 #[path = "../../src/providers/mod.rs"]
 mod providers;
 #[path = "../../src/proxy.rs"]
