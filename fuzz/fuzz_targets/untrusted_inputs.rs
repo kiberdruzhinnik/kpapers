@@ -13,9 +13,6 @@ mod providers;
 mod proxy;
 #[path = "../../src/rss.rs"]
 mod rss;
-#[path = "../../src/spell_correction.rs"]
-mod spell_correction;
-
 libfuzzer_sys::fuzz_target!(|data: &[u8]| {
     let Some((&selector, input)) = data.split_first() else {
         return;

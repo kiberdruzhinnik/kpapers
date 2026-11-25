@@ -511,7 +511,7 @@ mod tests {
             "success",
         )
         .await;
-        let inline_html = "<p>по-своему [исправлено: посвоему], the [corrected from: teh]</p>\n<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
+        let inline_html = "<p>посвоему, the teh</p>\n<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
         sqlx::query("UPDATE cached_content SET sanitized_html=? WHERE document_id='doc'")
             .bind(inline_html)
             .execute(&pool)
@@ -588,8 +588,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             markdown,
-            "# entry\n\nпо-своему \\[исправлено: посвоему\\], the \\[corrected from: teh\\]\n\nBefore image\n\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n\nAfter image\n"
+            "# entry\n\nпосвоему, the teh\n\nBefore image\n\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n\nAfter image\n"
         );
+        assert!(!markdown.contains("[исправлено:"));
+        assert!(!markdown.contains("[corrected from:"));
 
         let response = export_scope(&pool, ExportScope::Year("feed", 2026))
             .await

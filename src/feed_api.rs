@@ -921,7 +921,7 @@ mod tests {
         sqlx::query("INSERT INTO source_documents (id, month_id, source_path, filename, source_url, content_fingerprint, size_bytes) VALUES ('doc', 'month', 'article.pdf', 'article.pdf', 'https://fixture.invalid/pdf-oxide/article.pdf', ?, ?)")
             .bind(&fingerprint).bind(pdf.len() as i64).execute(&pool).await.unwrap();
         let old_marker_key = format!("pdf-text-v13:marker:{fingerprint}");
-        let cached_html = "<p>по-своему [исправлено: посвоему], the [corrected from: teh]</p>\n<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
+        let cached_html = "<p>посвоему, the teh</p>\n<p>Before image</p>\n<img src=\"data:image/jpeg;base64,AQID\" alt=\"\" width=\"3\" height=\"2\" style=\"max-width:100%;height:auto\">\n<p>After image</p>";
         sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES ('doc', ?, 'Last successful content', 'Last successful content', ?, 1)")
             .bind(&old_marker_key).bind(cached_html).execute(&pool).await.unwrap();
 
@@ -1009,10 +1009,56 @@ mod tests {
         assert!(rss_body.contains(&format!(
             "<content:encoded><![CDATA[{cached_html}]]></content:encoded>"
         )));
-        assert!(rss_body.contains("по-своему [исправлено: посвоему]"));
-        assert!(rss_body.contains("the [corrected from: teh]"));
+        assert!(rss_body.contains("посвоему, the teh"));
+        assert!(!rss_body.contains("[исправлено:"));
+        assert!(!rss_body.contains("[corrected from:"));
         assert!(rss_body.find("Before image").unwrap() < rss_body.find("AQID").unwrap());
         assert!(rss_body.find("AQID").unwrap() < rss_body.find("After image").unwrap());
+
+        let refreshed_pdf =
+            include_bytes!("../tests/fixtures/pdf-image-extraction/2026-11-19-crimean-bridge.pdf")
+                .to_vec();
+        std::fs::write(folder.join("article.pdf"), &refreshed_pdf).unwrap();
+        let refreshed_fingerprint = format!("{:x}", Sha256::digest(&refreshed_pdf));
+        let stale_corrected_html =
+            "<p>по-своему [исправлено: посвоему]</p><p>success [corrected from: sucess]</p>";
+        let stale_revision_key = format!("pdf-text-v35:pdf_oxide:{refreshed_fingerprint}");
+        sqlx::query(
+            "UPDATE source_documents SET content_fingerprint=?, size_bytes=? WHERE id='doc'",
+        )
+        .bind(&refreshed_fingerprint)
+        .bind(refreshed_pdf.len() as i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE cached_content SET content_fingerprint=?, extracted_text=?, first_page_text=?, sanitized_html=? WHERE document_id='doc'")
+            .bind(&stale_revision_key)
+            .bind("по-своему [исправлено: посвоему] success [corrected from: sucess]")
+            .bind("по-своему [исправлено: посвоему]")
+            .bind(stale_corrected_html)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let refreshed = extract(false).await.unwrap();
+        assert_eq!(refreshed.0.status, "success");
+        let (text, html, cache_key): (String, String, String) = sqlx::query_as(
+            "SELECT extracted_text, sanitized_html, content_fingerprint FROM cached_content WHERE document_id='doc'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(cache_key, stale_revision_key);
+        assert!(cache_key.starts_with("pdf-text-v36:pdf_oxide:"));
+        assert_ne!(
+            text,
+            "по-своему [исправлено: посвоему] success [corrected from: sucess]"
+        );
+        assert!(!text.contains("[исправлено:"));
+        assert!(!text.contains("[corrected from:"));
+        assert!(!html.contains("[исправлено:"));
+        assert!(!html.contains("[corrected from:"));
+
         let _ = std::fs::remove_dir_all(&fixture_root);
         crate::test_support::cleanup(pool, path).await;
     }

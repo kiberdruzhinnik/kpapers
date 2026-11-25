@@ -14,7 +14,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 COPY src ./src
 COPY migrations ./migrations
-COPY assets ./assets
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     find src -type f -exec touch {} + \
