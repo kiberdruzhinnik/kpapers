@@ -26,8 +26,6 @@ pdf_oxide = { version = "0.3.78", features = ["jpeg2000"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 libcaesium = { version = "0.21.2", default-features = false, features = ["jpg"] }
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
-spellbook = "=0.4.2"
-
 [patch.crates-io]
 pdf_oxide = { path = "vendor/pdf_oxide" }
 

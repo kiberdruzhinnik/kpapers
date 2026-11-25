@@ -9,7 +9,6 @@ pub mod proxy;
 pub mod proxy_settings;
 pub mod rss;
 pub mod scheduler;
-pub(crate) mod spell_correction;
 
 #[cfg(test)]
 mod test_support;
