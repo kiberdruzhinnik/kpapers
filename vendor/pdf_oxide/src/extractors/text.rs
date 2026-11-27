@@ -18,6 +18,20 @@ use crate::fonts::unicode_decode::{fallback_char_to_unicode, DecodePolicy, TextC
 use crate::fonts::FontInfo;
 use crate::geometry::Rect;
 
+/// Maximum stroke-to-font-size ratio treated as synthetic bold when PDF text
+/// is rendered with both fill and stroke. Thin strokes around filled glyphs
+/// are commonly used to simulate a heavier font face.
+const SYNTHETIC_BOLD_MAX_STROKE_RATIO: f32 = 0.04;
+
+fn is_synthetic_bold(render_mode: u8, line_width: f32, font_size: f32) -> bool {
+    matches!(render_mode, 2 | 6)
+        && line_width.is_finite()
+        && line_width > 0.0
+        && font_size.is_finite()
+        && font_size > 0.0
+        && line_width / font_size <= SYNTHETIC_BOLD_MAX_STROKE_RATIO
+}
+
 /// Decode a show string the way extraction reads it.
 ///
 /// Extraction keeps an unmapped code when the caller asked for it, leaves
@@ -1999,9 +2013,12 @@ impl TjBuffer {
             state.font_size * (combined.d * combined.d + combined.b * combined.b).sqrt();
         // Pre-compute horizontal scale for converting text-space widths to user space
         let user_h_scale = (combined.a * combined.a + combined.c * combined.c).sqrt();
-        let font_weight = match &cached_font {
-            Some(f) if f.is_bold() => FontWeight::Bold,
-            _ => FontWeight::Normal,
+        let font_weight = if cached_font.as_ref().is_some_and(|font| font.is_bold())
+            || is_synthetic_bold(state.render_mode, state.line_width, state.font_size)
+        {
+            FontWeight::Bold
+        } else {
+            FontWeight::Normal
         };
         let is_italic = cached_font.as_ref().map(|f| f.is_italic()).unwrap_or(false);
         // Invisible text (Tr 3/7, ISO 32000-1 §9.3.6) is never real visible
@@ -5806,6 +5823,9 @@ impl<'doc> TextExtractor<'doc> {
             },
 
             // Graphics state operators
+            Operator::SetLineWidth { width } => {
+                self.state_stack.current_mut().line_width = width;
+            }
             Operator::SaveState => {
                 // Flush the Tj span buffer before pushing graphics state.
                 // q/Q wraps a graphics-state block; restoring after Q can
@@ -7830,16 +7850,15 @@ impl<'doc> TextExtractor<'doc> {
         }
 
         // Step 4: Determine font weight
-        let font_weight = if let Some(font_name) = state.font_name.as_ref() {
-            if let Some(font) = self.fonts.get(font_name) {
-                if font.is_bold() {
-                    FontWeight::Bold
-                } else {
-                    FontWeight::Normal
-                }
-            } else {
-                FontWeight::Normal
-            }
+        let font_metadata_is_bold = state
+            .font_name
+            .as_ref()
+            .and_then(|font_name| self.fonts.get(font_name))
+            .is_some_and(|font| font.is_bold());
+        let font_weight = if font_metadata_is_bold
+            || is_synthetic_bold(state.render_mode, state.line_width, state.font_size)
+        {
+            FontWeight::Bold
         } else {
             FontWeight::Normal
         };
@@ -10565,6 +10584,21 @@ mod tests {
 
         assert_eq!(chars.len(), 1);
         assert_eq!(chars[0].char, 'X');
+    }
+
+    #[test]
+    fn synthetic_bold_requires_fill_and_stroke_with_a_narrow_positive_stroke() {
+        assert!(super::is_synthetic_bold(2, 0.42857, 15.0));
+        assert!(super::is_synthetic_bold(6, 0.6, 15.0));
+        assert!(super::is_synthetic_bold(2, 0.6, 15.0));
+
+        assert!(!super::is_synthetic_bold(0, 0.42857, 15.0));
+        assert!(!super::is_synthetic_bold(1, 0.42857, 15.0));
+        assert!(!super::is_synthetic_bold(2, 0.61, 15.0));
+        assert!(!super::is_synthetic_bold(2, 0.0, 15.0));
+        assert!(!super::is_synthetic_bold(2, -0.1, 15.0));
+        assert!(!super::is_synthetic_bold(2, 0.1, 0.0));
+        assert!(!super::is_synthetic_bold(2, f32::NAN, 15.0));
     }
 
     // ========================================================================
