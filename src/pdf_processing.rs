@@ -4,8 +4,10 @@ use pdf_oxide::PdfDocument;
 use pdf_oxide::extractors::PdfImage;
 use pdf_oxide::geometry::Rect;
 use pdf_oxide::layout::TextLine;
+use spellbook::Dictionary;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug)]
@@ -17,7 +19,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 36;
+const EXTRACTION_PIPELINE_REVISION: u32 = 37;
 const MAX_PDF_IMAGE_COUNT: usize = 100;
 const MAX_PDF_IMAGE_DIMENSION: u32 = 20_000;
 const MAX_PDF_IMAGE_PIXELS: u64 = 8_000_000;
@@ -28,6 +30,10 @@ const LITERAL_MARKDOWN_DISCLAIMER: &str = "**это не инвестицион�
 const INVESTMENT_DISCLAIMER_END: &str =
     "данный документ не является личной инвестиционной рекомендацией";
 static VECTOR_RENDER_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+static RUSSIAN_DICTIONARY: OnceLock<Dictionary> = OnceLock::new();
+
+const RUSSIAN_AFFIXES: &str = include_str!("../data/russian-hunspell/ru_RU.aff");
+const RUSSIAN_WORDS: &str = include_str!("../data/russian-hunspell/ru_RU.dic");
 
 #[derive(Clone, Debug)]
 struct StyledRun {
@@ -1299,21 +1305,44 @@ fn hyphenated_line_continuation(previous: &str, next: &str) -> bool {
 }
 
 fn lexical_line_hyphen(previous: &str, next: &str) -> bool {
-    const LEXICAL_COMPOUNDS: &[(&str, &str)] = &[
-        ("по-", "товарищески"),
-        ("чем-", "нибудь"),
-        ("объяснения-", "мастерключа"),
-        ("проповедники-", "фундаменталисты"),
-        ("какой-", "либо"),
-        ("государств-", "членов"),
-        ("Украина-", "Россия"),
-        ("Косиняк-", "Камыш"),
-        ("Эр-", "Рияде"),
-    ];
+    let previous = previous.trim_end();
+    let next = next.trim_start();
+    let Some(left) = previous
+        .strip_suffix(['-', '‐', '‑'])
+        .and_then(|word| word.rsplit(|ch: char| !ch.is_alphabetic()).next())
+    else {
+        return false;
+    };
+    let Some(right) = next.split(|ch: char| !ch.is_alphabetic()).next() else {
+        return false;
+    };
+    if left.is_empty() || right.is_empty() || !is_russian_word(left) || !is_russian_word(right) {
+        return false;
+    }
 
-    LEXICAL_COMPOUNDS
-        .iter()
-        .any(|(left, right)| previous.ends_with(left) && next.starts_with(right))
+    let joined = format!("{left}{right}").to_lowercase();
+    let hyphenated = format!("{left}-{right}").to_lowercase();
+    let dictionary = RUSSIAN_DICTIONARY.get_or_init(|| {
+        Dictionary::new(RUSSIAN_AFFIXES, RUSSIAN_WORDS)
+            .expect("bundled Russian Hunspell dictionary must parse")
+    });
+    let joined_is_word = dictionary.check(&joined);
+    let hyphenated_is_word = dictionary.check(&hyphenated);
+
+    // Only remove the hyphen when the lexicon supports the joined form and
+    // rejects the hyphenated form. Ambiguous and unknown forms retain it.
+    preserve_russian_hyphen(joined_is_word, hyphenated_is_word)
+}
+
+fn preserve_russian_hyphen(joined_is_word: bool, hyphenated_is_word: bool) -> bool {
+    !joined_is_word || hyphenated_is_word
+}
+
+fn is_russian_word(word: &str) -> bool {
+    !word.is_empty()
+        && word
+            .chars()
+            .all(|ch| matches!(ch, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё'))
 }
 
 fn discretionary_line_hyphen(previous: &str, next: &str) -> bool {
@@ -1961,13 +1990,15 @@ pub fn classify_promotion(filename: &str, first_page: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        PositionedImage, STANDARD, StyledLine, StyledRun, cache_fingerprint, extract_pdf,
-        finalize_pages, html_to_markdown, inline_jpeg_image_html, is_safe_inline_jpeg_image_markup,
+        PositionedImage, RUSSIAN_AFFIXES, RUSSIAN_DICTIONARY, RUSSIAN_WORDS, STANDARD, StyledLine,
+        StyledRun, cache_fingerprint, discretionary_line_hyphen, extract_pdf, finalize_pages,
+        html_to_markdown, inline_jpeg_image_html, is_safe_inline_jpeg_image_markup,
         is_skladchik_promotion, is_skladchik_purchase_promotion, is_xml_10_char,
-        large_gap_continues_sentence, lines_and_images_to_html, lines_to_html, normalize_text,
-        optimize_pdf_image, pages_to_text, push_styled_char, strip_page_label_lines,
-        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
-        text_lines_to_styled_lines, text_to_safe_html,
+        large_gap_continues_sentence, lexical_line_hyphen, lines_and_images_to_html, lines_to_html,
+        normalize_text, optimize_pdf_image, pages_to_text, preserve_russian_hyphen,
+        push_styled_char, strip_page_label_lines, strip_page_labels_by_content_position,
+        strip_sponsr_branding, strip_sponsr_preamble, text_lines_to_styled_lines,
+        text_to_safe_html,
     };
     use base64::Engine as _;
     use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
@@ -1975,6 +2006,7 @@ mod tests {
     use pdf_oxide::layout::{FontWeight, TextChar, TextLine, Word};
 
     use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
+    use spellbook::Dictionary;
 
     const AD: &str = "skladchik.ORG\nТы еще\nне в Клубе?\nЧто такое Клуб «Складчик»?";
 
@@ -2904,7 +2936,7 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v36:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v37:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v35:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v31:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
@@ -3568,6 +3600,7 @@ mod tests {
     #[test]
     fn preserves_reported_lexical_hyphens_across_same_page_and_page_boundary_wraps() {
         let compounds = [
+            ("во", "вторых", "во-вторых"),
             ("какой", "либо", "какой-либо"),
             ("государств", "членов", "государств-членов"),
             ("Украина", "Россия", "Украина-Россия"),
@@ -3591,6 +3624,32 @@ mod tests {
             assert_eq!(normalize_text(&pages_to_text(&page_boundary)), expected);
             assert_eq!(lines_to_html(&page_boundary), format!("<p>{expected}</p>"));
         }
+    }
+
+    #[test]
+    fn russian_lexicon_classifies_only_confirmed_discretionary_hyphens() {
+        let dictionary = RUSSIAN_DICTIONARY.get_or_init(|| {
+            Dictionary::new(RUSSIAN_AFFIXES, RUSSIAN_WORDS)
+                .expect("bundled Russian Hunspell dictionary must parse")
+        });
+        assert!(dictionary.check("пристрастились"));
+        assert!(!dictionary.check("пристрасти-лись"));
+        assert!(discretionary_line_hyphen("пристрасти-", "лись"));
+        assert!(dictionary.check("достопримечательностями"));
+        assert!(discretionary_line_hyphen("достопримечатель-", "ностями"));
+
+        // The joined spelling is not in the lexicon, so preserve the boundary
+        // hyphen instead of corrupting an unknown word.
+        assert!(!dictionary.check("вовторых"));
+        assert!(!discretionary_line_hyphen("во-", "вторых"));
+        assert!(lexical_line_hyphen("неизвестнослово-", "неизвестнаячасть"));
+        assert!(discretionary_line_hyphen("frozen-", "thawed"));
+        assert!(discretionary_line_hyphen("Rаpporteur-", "other"));
+
+        assert!(!preserve_russian_hyphen(true, false));
+        assert!(preserve_russian_hyphen(false, true));
+        assert!(preserve_russian_hyphen(true, true));
+        assert!(preserve_russian_hyphen(false, false));
     }
 
     #[test]
