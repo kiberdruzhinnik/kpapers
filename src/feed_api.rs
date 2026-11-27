@@ -1049,7 +1049,7 @@ mod tests {
         .await
         .unwrap();
         assert_ne!(cache_key, stale_revision_key);
-        assert!(cache_key.starts_with("pdf-text-v36:pdf_oxide:"));
+        assert!(cache_key.starts_with("pdf-text-v37:pdf_oxide:"));
         assert_ne!(
             text,
             "по-своему [исправлено: посвоему] success [corrected from: sucess]"
