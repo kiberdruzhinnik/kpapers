@@ -323,6 +323,8 @@ pub async fn extract_document(
         let mut extracted = crate::pdf_processing::extract_pdf(&bytes, maximum)
             .map_err(|error| format!("PDF extraction failed: {}", safe_error_text(&error.to_string())))?;
         crate::pdf_processing::repair_sponsr_title_from_filename(&row.3, &mut extracted);
+        extracted.html = crate::pdf_processing::normalize_article_heading_html(&extracted.html, &row.3);
+        extracted.markdown = crate::pdf_processing::html_to_markdown(&extracted.html);
         let html = extracted.html.clone();
         let classification = crate::pdf_processing::classify_promotion(&row.3, &extracted.first_page);
         sqlx::query("INSERT INTO cached_content (document_id, content_fingerprint, extracted_text, first_page_text, sanitized_html, page_count) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(document_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint, extracted_text=excluded.extracted_text, first_page_text=excluded.first_page_text, sanitized_html=excluded.sanitized_html, page_count=excluded.page_count, processed_at=CURRENT_TIMESTAMP")
@@ -650,6 +652,7 @@ async fn delete_scope(pool: &SqlitePool, query: &str, values: Vec<String>) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     #[test]
     fn feed_input_requires_a_nonblank_name_and_positive_interval() {
@@ -1003,11 +1006,13 @@ mod tests {
             .await
             .unwrap();
         let rss_body = String::from_utf8_lossy(&rss_body);
+        let normalized_cached_html =
+            crate::pdf_processing::normalize_article_heading_html(cached_html, "article.pdf");
         assert!(rss_body.contains(&format!(
-            "<description><![CDATA[{cached_html}]]></description>"
+            "<description><![CDATA[{normalized_cached_html}]]></description>"
         )));
         assert!(rss_body.contains(&format!(
-            "<content:encoded><![CDATA[{cached_html}]]></content:encoded>"
+            "<content:encoded><![CDATA[{normalized_cached_html}]]></content:encoded>"
         )));
         assert!(rss_body.contains("посвоему, the teh"));
         assert!(!rss_body.contains("[исправлено:"));
@@ -1049,7 +1054,7 @@ mod tests {
         .await
         .unwrap();
         assert_ne!(cache_key, stale_revision_key);
-        assert!(cache_key.starts_with("pdf-text-v37:pdf_oxide:"));
+        assert!(cache_key.starts_with("pdf-text-v38:pdf_oxide:"));
         assert_ne!(
             text,
             "по-своему [исправлено: посвоему] success [corrected from: sucess]"
@@ -1058,6 +1063,161 @@ mod tests {
         assert!(!text.contains("[corrected from:"));
         assert!(!html.contains("[исправлено:"));
         assert!(!html.contains("[corrected from:"));
+
+        let reference_pdf = include_bytes!(
+            "../tests/fixtures/pdf-bold-formatting/dark-enlighteners-feudalism-again.pdf"
+        );
+        std::fs::write(folder.join("article.pdf"), reference_pdf).unwrap();
+        let reference_fingerprint = format!("{:x}", Sha256::digest(reference_pdf));
+        let reference_filename =
+            "20250310 - Тёмные Просветители требуют Сделать Россию Феодальной Снова.pdf";
+        sqlx::query("UPDATE source_documents SET filename=?, content_fingerprint=?, size_bytes=? WHERE id='doc'")
+            .bind(reference_filename)
+            .bind(&reference_fingerprint)
+            .bind(reference_pdf.len() as i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale_reference_key = format!("pdf-text-v37:pdf_oxide:{reference_fingerprint}");
+        sqlx::query("UPDATE cached_content SET content_fingerprint=?, extracted_text='stale extraction', first_page_text='stale extraction', sanitized_html='<p>stale extraction</p>' WHERE document_id='doc'")
+            .bind(&stale_reference_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let forced = extract(true).await.unwrap();
+        assert_eq!(forced.0.status, "success");
+        let (reference_text, reference_html, cache_key): (String, String, String) = sqlx::query_as(
+            "SELECT extracted_text, sanitized_html, content_fingerprint FROM cached_content WHERE document_id='doc'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let page_two_bold = "В случае мискастинга фильм проваливается в прокате, а история заканчивается не новой эпохой, а пробуксовыванием или фейлом. Или вообще коллапсом";
+        let normal_text = "Сегодня для нас нет ничего актуальней философий.";
+        assert!(cache_key.starts_with("pdf-text-v38:pdf_oxide:"));
+        assert!(reference_text.contains(page_two_bold));
+        assert!(reference_html.contains(&format!("<strong>{page_two_bold}</strong>")));
+        assert!(reference_html.contains(normal_text));
+        assert!(!reference_html.contains(&format!("<strong>{normal_text}</strong>")));
+        assert_eq!(
+            reference_html.matches("<h1>").count(),
+            1,
+            "the March 10 article must have exactly one H1"
+        );
+        let mut previous_level = 0;
+        let mut expected_headings = Vec::new();
+        let mut cursor = 0;
+        while let Some((start, end, level)) = (1..=3)
+            .filter_map(|level| {
+                let open = format!("<h{level}>");
+                reference_html[cursor..]
+                    .find(&open)
+                    .map(|relative| (cursor + relative, open, level))
+            })
+            .min_by_key(|(start, _, _)| *start)
+            .and_then(|(start, open, level)| {
+                let content_start = start + open.len();
+                let close = format!("</h{level}>");
+                reference_html[content_start..]
+                    .find(&close)
+                    .map(|relative_end| (start, content_start + relative_end + close.len(), level))
+            })
+        {
+            assert!(
+                level <= previous_level + 1,
+                "heading hierarchy skips a level"
+            );
+            previous_level = level;
+            let open_end = reference_html[start..].find('>').unwrap() + start + 1;
+            let close_start = end - format!("</h{level}>").len();
+            let heading_html = &reference_html[open_end..close_start];
+            expected_headings.push((
+                level,
+                crate::pdf_processing::html_to_markdown(&format!(
+                    "<h{level}>{heading_html}</h{level}>"
+                ))
+                .trim_start_matches('#')
+                .trim()
+                .to_owned(),
+            ));
+            cursor = end;
+        }
+        assert_eq!(expected_headings.first().map(|(level, _)| *level), Some(1));
+
+        let rss = crate::rss::render(Path("feed".into()), State(pool.clone())).await;
+        let rss_body = axum::body::to_bytes(rss.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        let rss_body = String::from_utf8_lossy(&rss_body);
+        assert!(rss_body.contains(&format!("<strong>{page_two_bold}</strong>")));
+        assert!(!rss_body.contains(&format!("<strong>{normal_text}</strong>")));
+        assert!(rss_body.contains(&format!(
+            "<content:encoded><![CDATA[{reference_html}]]></content:encoded>"
+        )));
+
+        let export = crate::export::export_month(Path("month".into()), State(pool.clone()))
+            .await
+            .unwrap();
+        let export_body = axum::body::to_bytes(export.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(export_body)).unwrap();
+        assert_eq!(archive.len(), 1);
+        let mut markdown = String::new();
+        archive
+            .by_index(0)
+            .unwrap()
+            .read_to_string(&mut markdown)
+            .unwrap();
+        assert!(markdown.contains(&format!("**{page_two_bold}**")));
+        assert!(markdown.contains(normal_text));
+        assert!(!markdown.contains(&format!("**{normal_text}**")));
+        let markdown_headings = markdown
+            .lines()
+            .filter_map(|line| {
+                let hashes = line
+                    .chars()
+                    .take_while(|character| *character == '#')
+                    .count();
+                (hashes > 0).then(|| (hashes, line[hashes..].trim().to_owned()))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(markdown_headings, expected_headings);
+        assert_eq!(
+            markdown_headings
+                .iter()
+                .filter(|(level, _)| *level == 1)
+                .count(),
+            1
+        );
+        sqlx::query("UPDATE cached_content SET sanitized_html='<p>Body without a title heading.</p>' WHERE document_id='doc'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fallback_rss = crate::rss::render(Path("feed".into()), State(pool.clone())).await;
+        let fallback_rss = axum::body::to_bytes(fallback_rss.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap();
+        let fallback_rss = String::from_utf8_lossy(&fallback_rss);
+        let fallback_title = reference_filename.trim_end_matches(".pdf");
+        assert!(fallback_rss.contains(&format!("<h1>{fallback_title}</h1>")));
+        let fallback_export =
+            crate::export::export_month(Path("month".into()), State(pool.clone()))
+                .await
+                .unwrap();
+        let fallback_export = axum::body::to_bytes(fallback_export.into_body(), 4 * 1024 * 1024)
+            .await
+            .unwrap();
+        let mut fallback_archive =
+            zip::ZipArchive::new(std::io::Cursor::new(fallback_export)).unwrap();
+        let mut fallback_markdown = String::new();
+        fallback_archive
+            .by_index(0)
+            .unwrap()
+            .read_to_string(&mut fallback_markdown)
+            .unwrap();
+        assert!(fallback_markdown.starts_with(&format!("# {fallback_title}\n")));
 
         let _ = std::fs::remove_dir_all(&fixture_root);
         crate::test_support::cleanup(pool, path).await;

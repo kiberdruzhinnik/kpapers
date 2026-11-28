@@ -142,11 +142,15 @@ async fn export_scope(pool: &SqlitePool, scope: ExportScope<'_>) -> Result<Respo
             .replace('[', "\\[")
             .replace(']', "\\]");
         let body = if entry.sanitized_html.trim().is_empty() {
-            entry.extracted_text
+            format!("# {title}\n\n{}", entry.extracted_text)
         } else {
-            crate::pdf_processing::html_to_markdown(&entry.sanitized_html)
+            let html = crate::pdf_processing::normalize_article_heading_html(
+                &entry.sanitized_html,
+                &entry.filename,
+            );
+            crate::pdf_processing::html_to_markdown(&html)
         };
-        write!(writer, "# {title}\n\n{body}\n").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        write!(writer, "{body}\n").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     let archive = writer
         .finish()
