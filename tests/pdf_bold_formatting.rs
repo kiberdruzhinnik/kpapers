@@ -53,11 +53,9 @@ fn preserves_bold_and_bold_italic_formatting_from_reference_pdf() {
     assert!(
         extracted.html[..bold_italic_html_start]
             .rfind("<em>")
-            .is_some_and(
-                |italic_start| extracted.html[italic_start..bold_italic_html_start]
-                    .find("</em>")
-                    .is_none()
-            ),
+            .is_some_and(|italic_start| {
+                !extracted.html[italic_start..bold_italic_html_start].contains("</em>")
+            }),
         "HTML should keep the bold phrase inside its italic quotation"
     );
 

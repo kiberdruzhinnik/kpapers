@@ -150,7 +150,7 @@ async fn export_scope(pool: &SqlitePool, scope: ExportScope<'_>) -> Result<Respo
             );
             crate::pdf_processing::html_to_markdown(&html)
         };
-        write!(writer, "{body}\n").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        writeln!(writer, "{body}").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     let archive = writer
         .finish()
