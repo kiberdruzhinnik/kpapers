@@ -19,7 +19,7 @@ pub struct ExtractedText {
     pub page_count: usize,
 }
 
-const EXTRACTION_PIPELINE_REVISION: u32 = 37;
+const EXTRACTION_PIPELINE_REVISION: u32 = 38;
 const MAX_PDF_IMAGE_COUNT: usize = 100;
 const MAX_PDF_IMAGE_DIMENSION: u32 = 20_000;
 const MAX_PDF_IMAGE_PIXELS: u64 = 8_000_000;
@@ -823,6 +823,86 @@ pub fn repair_sponsr_title_from_filename(filename: &str, extracted: &mut Extract
         "{title}\n\n{}",
         remove_publication_timestamp(&extracted.full_text)
     );
+}
+
+pub(crate) fn normalize_article_heading_html(html: &str, filename: &str) -> String {
+    let first_title = html.find("<h1>").and_then(|start| {
+        html[start..]
+            .find("</h1>")
+            .map(|relative_end| (start, start + relative_end + "</h1>".len()))
+    });
+    let (title, body) = if let Some((start, end)) = first_title {
+        (
+            html[start..end].to_owned(),
+            format!("{}{}", &html[..start], &html[end..]),
+        )
+    } else {
+        let basename = filename.rsplit(['/', '\\']).next().unwrap_or(filename);
+        let title = basename
+            .strip_suffix(".pdf")
+            .or_else(|| basename.strip_suffix(".PDF"))
+            .unwrap_or(basename);
+        let title = if title.is_empty() { "Document" } else { title };
+        (format!("<h1>{}</h1>", escape_html(title)), html.to_owned())
+    };
+
+    let body = normalize_secondary_heading_levels(body.trim_matches('\n'));
+    if body.is_empty() {
+        title
+    } else {
+        format!("{title}\n{body}")
+    }
+}
+
+fn normalize_secondary_heading_levels(html: &str) -> String {
+    let mut output = String::with_capacity(html.len());
+    let mut cursor = 0;
+    let mut previous_level = 1u8;
+    let mut open_level = None;
+
+    while let Some((start, end, source_level, closing)) = next_heading_tag(html, cursor) {
+        output.push_str(&html[cursor..start]);
+        let level = if closing {
+            open_level.take().unwrap_or(source_level)
+        } else {
+            let desired_level = source_level.clamp(2, 3);
+            let normalized_level = desired_level.min(previous_level.saturating_add(1));
+            let normalized_level = normalized_level.max(2);
+            previous_level = normalized_level;
+            open_level = Some(normalized_level);
+            normalized_level
+        };
+        if closing {
+            output.push_str(&format!("</h{level}>"));
+        } else {
+            output.push_str(&format!("<h{level}>"));
+        }
+        cursor = end;
+    }
+
+    output.push_str(&html[cursor..]);
+    output
+}
+
+fn next_heading_tag(html: &str, cursor: usize) -> Option<(usize, usize, u8, bool)> {
+    (1..=6)
+        .flat_map(|level| {
+            [
+                (format!("<h{level}>"), level, false),
+                (format!("</h{level}>"), level, true),
+            ]
+        })
+        .filter_map(|(tag, level, closing)| {
+            html[cursor..].find(&tag).map(|relative| {
+                (
+                    cursor + relative,
+                    cursor + relative + tag.len(),
+                    level,
+                    closing,
+                )
+            })
+        })
+        .min_by_key(|(start, _, _, _)| *start)
 }
 
 pub(crate) fn html_to_markdown(html: &str) -> String {
@@ -1995,10 +2075,10 @@ mod tests {
         html_to_markdown, inline_jpeg_image_html, is_safe_inline_jpeg_image_markup,
         is_skladchik_promotion, is_skladchik_purchase_promotion, is_xml_10_char,
         large_gap_continues_sentence, lexical_line_hyphen, lines_and_images_to_html, lines_to_html,
-        normalize_text, optimize_pdf_image, pages_to_text, preserve_russian_hyphen,
-        push_styled_char, strip_page_label_lines, strip_page_labels_by_content_position,
-        strip_sponsr_branding, strip_sponsr_preamble, text_lines_to_styled_lines,
-        text_to_safe_html,
+        normalize_article_heading_html, normalize_text, optimize_pdf_image, pages_to_text,
+        preserve_russian_hyphen, push_styled_char, strip_page_label_lines,
+        strip_page_labels_by_content_position, strip_sponsr_branding, strip_sponsr_preamble,
+        text_lines_to_styled_lines, text_to_safe_html,
     };
     use base64::Engine as _;
     use pdf_oxide::extractors::{ColorSpace, ImageData, PdfImage, PixelFormat};
@@ -2936,7 +3016,7 @@ mod tests {
     fn cache_fingerprint_contains_pdf_oxide_and_processing_revision() {
         let source = "source-md5";
         let processed = cache_fingerprint(source);
-        assert_eq!(processed, format!("pdf-text-v37:pdf_oxide:{source}"));
+        assert_eq!(processed, format!("pdf-text-v38:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v35:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v31:pdf_oxide:{source}"));
         assert_ne!(processed, format!("pdf-text-v29:pdf_oxide:{source}"));
@@ -2958,6 +3038,31 @@ mod tests {
         assert_ne!(processed, format!("pdf-text-v13:marker:{source}"));
         assert_ne!(processed, source);
         assert_eq!(cache_fingerprint(source), processed);
+    }
+
+    #[test]
+    fn normalizes_article_headings_to_one_title_and_a_valid_hierarchy() {
+        let html =
+            "<p>Lead</p>\n<h1>Article title</h1>\n<h1>Section title</h1>\n<h3>Nested section</h3>";
+        let normalized = normalize_article_heading_html(html, "filename.pdf");
+        assert_eq!(
+            normalized,
+            "<h1>Article title</h1>\n<p>Lead</p>\n\n<h2>Section title</h2>\n<h3>Nested section</h3>"
+        );
+        assert_eq!(normalized.matches("<h1>").count(), 1);
+    }
+
+    #[test]
+    fn uses_filename_title_when_article_has_no_h1_and_repairs_heading_skips() {
+        let normalized = normalize_article_heading_html(
+            "<h3>Section</h3>\n<h2>Another section</h2>",
+            "reference.pdf",
+        );
+        assert_eq!(
+            normalized,
+            "<h1>reference</h1>\n<h2>Section</h2>\n<h2>Another section</h2>"
+        );
+        assert_eq!(normalized.matches("<h1>").count(), 1);
     }
 
     fn line_from_words(words: &[(&str, f32, bool)]) -> StyledLine {

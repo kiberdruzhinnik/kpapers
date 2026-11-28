@@ -51,6 +51,10 @@ pub async fn render(Path(feed_id): Path<String>, State(pool): State<SqlitePool>)
         now
     );
     for item in items {
+        let content = crate::pdf_processing::normalize_article_heading_html(
+            &item.sanitized_html,
+            &item.filename,
+        );
         let title = item
             .filename
             .strip_suffix(".pdf")
@@ -62,7 +66,7 @@ pub async fn render(Path(feed_id): Path<String>, State(pool): State<SqlitePool>)
             base.trim_end_matches('/'),
             item.id
         );
-        xml.push_str(&format!("<item><title>{}</title><link>{}</link><guid isPermaLink=\"false\">{}</guid><pubDate>{}</pubDate><description><![CDATA[{}]]></description><content:encoded><![CDATA[{}]]></content:encoded></item>", xml_escape(title), xml_escape(&download_url), xml_escape(&item.id), xml_escape(&date), item.sanitized_html, item.sanitized_html));
+        xml.push_str(&format!("<item><title>{}</title><link>{}</link><guid isPermaLink=\"false\">{}</guid><pubDate>{}</pubDate><description><![CDATA[{content}]]></description><content:encoded><![CDATA[{content}]]></content:encoded></item>", xml_escape(title), xml_escape(&download_url), xml_escape(&item.id), xml_escape(&date)));
     }
     xml.push_str("</channel></rss>");
     Response::builder()
